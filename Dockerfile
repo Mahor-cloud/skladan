@@ -9,8 +9,6 @@ COPY package*.json ./
 
 # Устанавливаем зависимости
 RUN npm install --global yarn
-
-# Устанавливаем зависимости
 RUN yarn install
 
 # Копируем остальные файлы
