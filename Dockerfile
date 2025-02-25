@@ -8,7 +8,6 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Устанавливаем зависимости
-RUN npm install --global yarn
 RUN yarn install
 
 # Копируем остальные файлы
