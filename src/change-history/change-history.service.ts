@@ -59,14 +59,35 @@ export class ChangeHistoryService {
 			createChangeHistoryDto
 		)
 		const subscriptions = await this.subscriptionModel.find().exec()
+
 		for (const subscription of subscriptions) {
-			await webpush.sendNotification(
-				subscription,
-				JSON.stringify({
-					title: createChangeHistoryDto.changeType,
-					body: createChangeHistoryDto.description,
-				})
-			)
+			try {
+				await webpush.sendNotification(
+					subscription,
+					JSON.stringify({
+						title: createChangeHistoryDto.changeType,
+						body: createChangeHistoryDto.description,
+					})
+				)
+			} catch (error) {
+				if (error.statusCode === 410) {
+					// Удаляем подписку из базы данных, если она неактивна
+					await this.subscriptionModel
+						.deleteOne({ _id: subscription._id })
+						.exec()
+					console.log(
+						`Подписка ${subscription._id} удалена, так как она неактивна.`
+					)
+				} else {
+					// Логируем другие ошибки
+					console.error('Ошибка отправки уведомления:', {
+						endpoint: subscription.endpoint,
+						statusCode: error.statusCode,
+						message: error.message,
+					})
+					throw error // Пробрасываем ошибку, если это не 410
+				}
+			}
 		}
 		return createdChangeHistory.save()
 	}

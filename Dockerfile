@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 4300
 
 # Запускаем приложение
-CMD [ "yarn", "start" ]
+CMD ["yarn", "start"]
