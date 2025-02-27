@@ -54,7 +54,7 @@ export class OrdersController {
 	}
 
 	@Delete(':id')
-	@Auth('admin', ['delete_orders'])
+	@Auth('user', ['delete_orders'])
 	@UsePipes(IdValidationPipe)
 	remove(@Param('id') id: string, @CurrentUser() currentUser: UserModel) {
 		return this.ordersService.remove(id, currentUser)
