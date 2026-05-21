@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Injectable, UnauthorizedException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { PassportStrategy } from '@nestjs/passport'

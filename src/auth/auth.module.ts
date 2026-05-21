@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { forwardRef, Module } from '@nestjs/common'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 import { JwtModule } from '@nestjs/jwt'

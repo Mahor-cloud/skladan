@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { IsArray, IsOptional, IsString, MaxLength } from 'class-validator'
 
 export class UpdateRoleDto {

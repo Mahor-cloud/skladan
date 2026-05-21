@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { genSalt, hash } from 'bcryptjs'
 import { Types } from 'mongoose'
 import { MigrationStep, MigrationResult } from './types'

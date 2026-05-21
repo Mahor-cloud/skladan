@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Controller, Get, Header, Query } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { SuperAdminAuth } from '../auth/decorators/super-admin-auth.decorator'

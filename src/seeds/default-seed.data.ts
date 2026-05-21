@@ -1,4 +1,7 @@
-
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
 
 export interface DefaultSeedRole {
 	name: string

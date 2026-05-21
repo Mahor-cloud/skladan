@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Logger } from '@nestjs/common'
 import { Connection } from 'mongoose'
 import { MIGRATIONS_V2_0_0, MIGRATION_VERSION } from './registry'

@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { IsInt, IsOptional, IsString } from 'class-validator'
 import { Type, Transform } from 'class-transformer'
 

@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { applyDecorators, SetMetadata, UseGuards } from '@nestjs/common'
 import { AdminGuard } from '../guards/admin.guard'
 import { JwtGuard } from '../guards/jwt.guard'

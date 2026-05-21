@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { MigrationStep } from './types'
 import { m001CreateDefaultCompany } from './001-create-default-company'
 import { m002MarkExistingAdmin } from './002-mark-existing-admin'

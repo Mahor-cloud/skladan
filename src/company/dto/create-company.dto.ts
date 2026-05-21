@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 export class CreateCompanyDto {

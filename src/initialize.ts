@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { ConfigService } from '@nestjs/config'
 import { Logger } from '@nestjs/common'
 import { getModelForClass } from '@typegoose/typegoose'

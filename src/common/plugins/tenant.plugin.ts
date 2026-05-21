@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
 
 import { Schema, Types } from 'mongoose'
 import { getTenantContext } from '../tenant-context/tenant-context.storage'

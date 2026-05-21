@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Body, Controller, Get, Put } from '@nestjs/common'
 import { SuperAdminAuth } from '../auth/decorators/super-admin-auth.decorator'
 import { SeedsService } from './seeds.service'

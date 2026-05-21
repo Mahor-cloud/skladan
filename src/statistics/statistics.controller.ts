@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Controller, Get, Header, Query, Res } from '@nestjs/common'
 import type { Response } from 'express'
 import { Auth } from '../auth/decorators/auth.decorator'

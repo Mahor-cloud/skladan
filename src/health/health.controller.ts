@@ -1,3 +1,8 @@
+/**
+ * Copyright 2026 Lord_mahor
+ * Licensed under Apache 2.0
+ */
+
 import { Controller, Get } from '@nestjs/common'
 import mongoose from 'mongoose'
 import { RealtimeService } from '../change-history/realtime.service'
