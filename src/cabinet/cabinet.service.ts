@@ -110,7 +110,6 @@ export class CabinetService {
 		}
 	}
 
-
 	async listMerged(user: UserModel) {
 		const products = await this.productModel.find({ deletedAt: null }).exec()
 		const cabinetItems = await this.cabinetModel
@@ -159,7 +158,6 @@ export class CabinetService {
 		return [...merged, ...customRows]
 	}
 
-
 	async listAllForCompany() {
 		return this.cabinetModel
 			.find({ deletedAt: null })
@@ -168,7 +166,6 @@ export class CabinetService {
 			.sort({ user: 1, position: 1 })
 			.exec()
 	}
-
 
 	async getSummary() {
 		const ctx = getTenantContext()
@@ -278,7 +275,6 @@ export class CabinetService {
 			{ $sort: { totalDeficit: -1, name: 1 } },
 		])
 
-
 		return agg
 	}
 
@@ -351,7 +347,6 @@ export class CabinetService {
 		return item
 	}
 
-
 	async replenishAfterOrder(orderItems: Array<{ product: any; quantity: number }>, userId: any) {
 		if (!Array.isArray(orderItems) || !orderItems.length) return
 		const userObjId = new Types.ObjectId(String(userId))
@@ -380,7 +375,6 @@ export class CabinetService {
 			.populate('product')
 			.exec()
 
-
 		const productIds = items
 			.map((i: any) => i.product?._id)
 			.filter(Boolean)
@@ -404,7 +398,6 @@ export class CabinetService {
 				}
 			}
 		}
-
 
 		const userPendingByProduct = await this.getUserPendingOrderQtyByProduct(
 			user._id

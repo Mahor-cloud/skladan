@@ -38,7 +38,6 @@ export class CabinetItem {
 	@prop({ default: 0, min: 0 })
 	currentQty: number
 
-
 	@prop({ default: 0, min: 0 })
 	customPrice?: number
 

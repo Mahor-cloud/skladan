@@ -31,8 +31,6 @@ export class PurchasesService {
 		private readonly counterService: CounterService
 	) {}
 
-
-
 	private purchaseItemsEqual(a: any[] = [], b: any[] = []): boolean {
 		const norm = (arr: any[]) =>
 			(arr || [])
@@ -168,7 +166,6 @@ export class PurchasesService {
 				}
 			}
 		}
-
 
 		const patch: any = { ...updatePurchaseDto }
 		if (updatePurchaseDto.items) {

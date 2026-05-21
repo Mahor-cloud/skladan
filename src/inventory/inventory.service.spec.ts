@@ -179,7 +179,6 @@ describe('reverseCompletion', () => {
 		const calls: any[] = []
 		const updateOne: UpdateOneFn = async (f, u) => { calls.push(u) }
 
-
 		const items = [{ product: 'p1', newQuantity: 20, quantity: 10 }]
 
 		await reverseCompletion(items, updateOne)
@@ -190,7 +189,6 @@ describe('reverseCompletion', () => {
 	it('reverses negative effect (newQty < original): increments product.quantity', async () => {
 		const calls: any[] = []
 		const updateOne: UpdateOneFn = async (f, u) => { calls.push(u) }
-
 
 		const items = [{ product: 'p1', newQuantity: 5, quantity: 10 }]
 

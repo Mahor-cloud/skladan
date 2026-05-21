@@ -64,13 +64,11 @@ export class ChangeHistoryController {
 		return { message: 'Notification register' }
 	}
 
-
 	@Auth('user')
 	@Get('subscription/me')
 	getMySubscription(@CurrentUser() currentUser: UserModel) {
 		return this.changeHistoryService.getMySubscription(currentUser)
 	}
-
 
 	@Auth('user')
 	@Put('subscription/preferences')

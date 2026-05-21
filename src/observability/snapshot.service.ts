@@ -13,9 +13,6 @@ import { ActiveUsersService } from './active-users.service'
 import { MetricsRegistryService } from './metrics-registry.service'
 import { MetricSnapshot } from './snapshot.model'
 
-// Если в будущем будет несколько процессов backend, нужно добавить
-// идентификатор процесса в снимок и либо разделять по нему данные, либо
-// писать снимки только из одного «ведущего» процесса. Сейчас процесс один.
 @Injectable()
 export class SnapshotService {
 	private readonly logger = new Logger(SnapshotService.name)
@@ -72,9 +69,7 @@ export class SnapshotService {
 		this.metrics.bumpPeak('skladan_event_loop_lag_ms', lag)
 	}
 
-
 	private mongoPoolStructureWarned = false
-
 
 	async refreshMongoPool() {
 		try {
@@ -116,7 +111,6 @@ export class SnapshotService {
 				}
 			}
 
-
 			if (!viaServerStatus) {
 				let topologyFound = false
 				for (const conn of mongoose.connections) {
@@ -141,7 +135,6 @@ export class SnapshotService {
 					)
 				}
 			}
-
 
 			const max = serverMax > 0 && clientMax > 0
 				? Math.min(clientMax, serverMax)
@@ -198,7 +191,6 @@ export class SnapshotService {
 		for (let i = 0; i < rows.length; i += stride) {
 			sampled.push(rows[i] as MetricSnapshot)
 		}
-
 
 		const lastRow = rows[rows.length - 1] as MetricSnapshot
 		if (sampled[sampled.length - 1] !== lastRow) sampled.push(lastRow)

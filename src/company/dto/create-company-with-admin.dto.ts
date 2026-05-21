@@ -35,11 +35,9 @@ export class CreateCompanyWithAdminDto {
 	@MaxLength(120)
 	adminName?: string
 
-
 	@IsOptional()
 	@IsBoolean()
 	seedRoles?: boolean
-
 
 	@IsOptional()
 	@IsBoolean()

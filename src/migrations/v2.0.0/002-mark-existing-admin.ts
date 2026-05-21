@@ -35,7 +35,6 @@ export const m002MarkExistingAdmin: MigrationStep = {
 		let changed = 0
 		let wouldChange = 0
 
-
 		const setFalseFilter = { isSuperAdmin: { $exists: false } }
 		if (dryRun) {
 			wouldChange += await users.countDocuments(setFalseFilter)
@@ -43,7 +42,6 @@ export const m002MarkExistingAdmin: MigrationStep = {
 			const res = await users.updateMany(setFalseFilter, { $set: { isSuperAdmin: false } })
 			changed += res.modifiedCount
 		}
-
 
 		const existingSuper = await users.findOne({ login: superLogin, isSuperAdmin: true })
 		if (existingSuper) {

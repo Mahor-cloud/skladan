@@ -169,9 +169,7 @@ export class ChangeHistoryService {
 			...(companyForHistory ? { company: new Types.ObjectId(String(companyForHistory)) } : {}),
 		})
 
-
 		const saved = await createdChangeHistory.save()
-
 
 		const pushCompany = companyForHistory
 			? new Types.ObjectId(String(companyForHistory))
@@ -184,7 +182,6 @@ export class ChangeHistoryService {
 				(createChangeHistoryDto as any).relatedUser
 			)
 		}
-
 
 		this.realtime.emit(
 			companyForHistory ? String(companyForHistory) : null,
@@ -248,7 +245,6 @@ export class ChangeHistoryService {
 		const category = categoryForChangeType(changeType)
 		const requiredPermission = permissionForCategory(category)
 
-
 		const subscriptions = await this.subscriptionModel
 			.find({ company })
 			.populate({
@@ -274,7 +270,6 @@ export class ChangeHistoryService {
 				if (!relatedUsers || relatedUsers.size === 0 || !relatedUsers.has(uid))
 					continue
 			}
-
 
 			if (requiredPermission) {
 				const user: any = subscription.user

@@ -140,7 +140,6 @@ describe('tenantPlugin — find/query hooks', () => {
 		const ctx = makeQueryCtx({ existingCompanyFilter: true })
 		await schema.triggerPre('find', ctx)
 
-
 		expect(ctx._conditions.company).toBe('already-set')
 	})
 

@@ -30,7 +30,6 @@ export class CounterService {
 		return result.value
 	}
 
-
 	async ensureAtLeast(company: Types.ObjectId | string, type: CounterType, value: number): Promise<number> {
 		const companyId = typeof company === 'string' ? new Types.ObjectId(company) : company
 		const result = await this.counterModel

@@ -24,7 +24,6 @@ export class ChangeHistory {
 	@prop({ ref: UserModel, type: mongoose.Types.ObjectId })
 	user: Ref<UserModel>
 
-
 	@prop({ ref: UserModel, type: mongoose.Types.ObjectId })
 	relatedUser?: Ref<UserModel>
 

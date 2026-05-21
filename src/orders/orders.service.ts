@@ -128,18 +128,15 @@ export class OrdersService {
 			? (createOrderDto as any[]).filter((i) => !i.__approveTargetExceed)
 			: []
 
-
 		if (!items.length) {
 			throw new BadRequestException('Заказ должен содержать хотя бы одну позицию')
 		}
-
 
 		const productIds = items.map((i) => i.product).filter(Boolean)
 		const products = productIds.length
 			? await this.productModel.find({ _id: { $in: productIds } }).exec()
 			: []
 		const productById = new Map(products.map((p) => [String(p._id), p]))
-
 
 		const userRole = currentUser.role
 			? await this.roleModel.findById(currentUser.role).exec()
@@ -312,7 +309,6 @@ export class OrdersService {
 				)
 			}
 
-
 			if (oldOrder.isPaid && !updateOrderDto.editReason?.trim()) {
 				throw new BadRequestException(
 					'При изменении оплаченного заказа укажите причину (editReason)'
@@ -334,13 +330,11 @@ export class OrdersService {
 				: []
 			productById = new Map(products.map((p) => [String(p._id), p]))
 
-
 			await this.assertStockAvailable(
 				updateOrderDto.items,
 				productById,
 				String(oldOrder._id)
 			)
-
 
 			const canApproveExceed =
 				isAdmin ||
@@ -411,7 +405,6 @@ export class OrdersService {
 			}
 		}
 
-
 		if (
 			updateOrderDto.isPaid === true &&
 			!oldOrder.isPaid
@@ -424,7 +417,6 @@ export class OrdersService {
 				note: `Заказчик отметил заказ как оплаченный`,
 			})
 		}
-
 
 		if (
 			updateOrderDto.confirmedPaid === true &&
@@ -506,8 +498,6 @@ export class OrdersService {
 			changeDate: Date.now(),
 		})
 
-
-
 		for (const ev of eventsToAppend) {
 			if (ev.type === 'surcharge-pending') {
 				await this.changeHistoryService.createChangeHistory({
@@ -560,7 +550,6 @@ export class OrdersService {
 				(newByProduct.get(it.product) || 0) + it.quantity
 			)
 		}
-
 
 		const allPids = new Set<string>([
 			...oldByProduct.keys(),
@@ -687,7 +676,6 @@ export class OrdersService {
 		excludeOrderId: string | null
 	): Promise<void> {
 
-
 		const productIds = items.map((i) => i.product).filter(Boolean)
 		const findFilter: any = {
 			isCompleted: false,
@@ -785,7 +773,6 @@ export class OrdersService {
 					: ''),
 			changeDate: Date.now(),
 		})
-
 
 		if (refundAmount > 0) {
 			await this.changeHistoryService.createChangeHistory({

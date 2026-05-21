@@ -42,8 +42,6 @@ export class UpdateInventoryDto {
 	@MaxLength(1000)
 	comment?: string
 
-
-
 	@IsOptional()
 	@IsString()
 	@MaxLength(500)

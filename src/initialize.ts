@@ -23,7 +23,6 @@ export async function initializeDatabase(configService: ConfigService) {
 
 		await mongoose.connect(mongoUri)
 
-
 		const UserCls = getModelForClass(UserModel, { schemaOptions: { collection: 'Users' } })
 		const CompanyCls = getModelForClass(Company, { schemaOptions: { collection: 'Company' } })
 		const RoleCls = getModelForClass(Role, { schemaOptions: { collection: 'Roles' } })
@@ -35,7 +34,6 @@ export async function initializeDatabase(configService: ConfigService) {
 		const superPassword = configService.get<string>('SUPER_ADMIN_PASSWORD')
 		const defaultName = configService.get<string>('DEFAULT_COMPANY_NAME') || 'Местность Саратов'
 		const defaultSlug = configService.get<string>('DEFAULT_COMPANY_SLUG') || 'saratov'
-
 
 		let superAdmin = await UserCls.findOne({ login: superLogin, isSuperAdmin: true })
 			.setOptions({ skipTenantScope: true } as any)
@@ -59,7 +57,6 @@ export async function initializeDatabase(configService: ConfigService) {
 			}
 		}
 
-
 		let defaultCompany = await CompanyCls.findOne({ slug: defaultSlug })
 			.setOptions({ skipTenantScope: true } as any)
 		if (!defaultCompany) {
@@ -72,7 +69,6 @@ export async function initializeDatabase(configService: ConfigService) {
 			} as any)
 			logger.log(`Default Company "${defaultName}" created.`)
 		}
-
 
 		const allCompanies = await CompanyCls.find({ deletedAt: null })
 			.setOptions({ skipTenantScope: true } as any)

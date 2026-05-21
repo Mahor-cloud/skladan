@@ -75,7 +75,6 @@ export class Order {
 	@prop({ default: 0 })
 	totalAmount: number
 
-
 	@prop({ default: 0 })
 	paidAmount: number
 

@@ -175,8 +175,6 @@ export class AuthService {
 		const oldUser = await this.UserModel.findById(id).exec()
 		if (!oldUser) throw new NotFoundException('Пользователь не найден')
 
-
-
 		if (updateUserDto.login && updateUserDto.login !== oldUser.login) {
 			const taken = await this.UserModel.findOne({ login: updateUserDto.login })
 				.setOptions({ skipTenantScope: true } as any)
@@ -238,8 +236,6 @@ export class AuthService {
 		await user.save()
 
 		const tokens = await this.issueTokenPair(user)
-
-
 
 		if (user.company) {
 			await this.changeHistoryService.createChangeHistory({

@@ -39,7 +39,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 		if (!user) throw new UnauthorizedException('Пользователь не найден')
 		if (user.deletedAt) throw new UnauthorizedException('Пользователь деактивирован')
 
-
 		;(user as any).isSuperAdmin = !!user.isSuperAdmin
 		;(user as any).company = user.company ?? null
 		return user

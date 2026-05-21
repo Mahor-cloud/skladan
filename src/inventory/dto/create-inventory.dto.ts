@@ -13,7 +13,6 @@ class InventoryItemDto {
 	@IsInt()
 	newQuantity: number
 
-
 	@IsInt()
 	quantity: number
 }

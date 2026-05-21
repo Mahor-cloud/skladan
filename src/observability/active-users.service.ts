@@ -7,7 +7,7 @@ import { Injectable } from '@nestjs/common'
 
 @Injectable()
 export class ActiveUsersService {
-	private readonly windowMs = 15 * 60 * 1000
+	private readonly windowMs = 3 * 60 * 1000
 	private readonly map = new Map<string, Map<string, number>>()
 
 	track(userId: string | null | undefined, companyId: string | null | undefined): void {

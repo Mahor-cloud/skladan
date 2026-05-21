@@ -18,7 +18,6 @@ import { SnapshotService } from './snapshot.service'
 	imports: [
 		TypegooseModule.forFeature([MetricSnapshot]),
 
-
 		ChangeHistoryModule,
 	],
 	controllers: [ObservabilityController],

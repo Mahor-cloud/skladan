@@ -21,7 +21,6 @@ async function bootstrap() {
 		})
 	)
 
-
 	const isProd = process.env.NODE_ENV === 'production'
 	const envOrigins = (process.env.CORS_ORIGINS || '')
 		.split(',')

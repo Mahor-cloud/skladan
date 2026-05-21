@@ -29,15 +29,13 @@ export class RealtimeService {
 		}
 	}
 
-
-
 	streamForCompany(company: string) {
 		const cid = String(company)
 		const events = this.subject.asObservable().pipe(
 			filter((e) => e.company === cid),
 			map((e) => ({ data: { type: e.type } }))
 		)
-		const heartbeat = interval(25000).pipe(map(() => ({ data: { type: 'ping' } })))
+		const heartbeat = interval(10000).pipe(map(() => ({ data: { type: 'ping' } })))
 		const stream = merge(events, heartbeat)
 
 		return new Observable((sub) => {

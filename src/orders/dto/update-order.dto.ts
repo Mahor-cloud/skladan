@@ -11,7 +11,6 @@ class OrderItemDto {
 	@IsMongoId()
 	product: string
 
-
 	@IsInt()
 	@Min(1)
 	quantity: number
@@ -59,7 +58,6 @@ export class UpdateOrderDto {
 	@IsString()
 	@MaxLength(500)
 	editReason?: string
-
 
 	@IsOptional()
 	@IsBoolean()

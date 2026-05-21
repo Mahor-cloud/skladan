@@ -109,7 +109,6 @@ export class SeedsService {
 		return doc
 	}
 
-
 	async applySeedsToCompany(
 		companyId: string,
 		opts: { seedRoles?: boolean; seedProducts?: boolean }

@@ -32,7 +32,6 @@ export class HealthController {
 				external_mb: Math.round(mem.external / 1048576),
 			},
 
-
 			event_loop_lag_ms: Math.round(lag),
 
 			sse_clients: sse,
@@ -40,7 +39,6 @@ export class HealthController {
 			ts: Date.now(),
 		}
 	}
-
 
 	private measureEventLoopLag(): Promise<number> {
 		return new Promise((resolve) => {

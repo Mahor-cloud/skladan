@@ -41,7 +41,6 @@ export const m003AddCompanyToCollections: MigrationStep = {
 		for (const collName of TENANT_COLLECTIONS) {
 			const coll = db.collection(collName)
 
-
 			const baseFilter: any = { company: { $exists: false } }
 			if (collName === 'Users') baseFilter.isSuperAdmin = { $ne: true }
 

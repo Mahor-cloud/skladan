@@ -26,8 +26,6 @@ import { PaymentMessageDto, ReceivedMessageDto, TargetWarehouseValueDto } from '
 export class DatabaseController {
 	constructor(private readonly databaseService: DatabaseService) {}
 
-
-
 	@Auth('user', ['view-messages'])
 	@Get('msg')
 	async getMessages() {
@@ -46,14 +44,11 @@ export class DatabaseController {
 		return this.databaseService.updateReceivedMessage(dto.receivedMessage)
 	}
 
-
 	@Auth('admin', ['edit-payment-message'])
 	@Put('msg/target-warehouse-value')
 	async updateTargetWarehouseValue(@Body() dto: TargetWarehouseValueDto) {
 		return this.databaseService.updateTargetWarehouseValue(dto.targetWarehouseValue)
 	}
-
-
 
 	@Auth('admin', ['export-database'])
 	@Get('export/company')
@@ -80,8 +75,6 @@ export class DatabaseController {
 		await this.databaseService.importCompanyData(companyId, data)
 		return { message: 'Данные компании успешно импортированы' }
 	}
-
-
 
 	@SuperAdminAuth()
 	@Get('export')

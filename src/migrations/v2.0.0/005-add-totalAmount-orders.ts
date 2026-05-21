@@ -22,7 +22,6 @@ export const m005AddTotalAmountOrders: MigrationStep = {
 		let processed = 0
 		let changed = 0
 
-
 		const allProducts = await products.find({}).toArray()
 		const priceMap = new Map<string, number>()
 		for (const p of allProducts) priceMap.set(String(p._id), p.price || 0)

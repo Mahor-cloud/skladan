@@ -48,7 +48,6 @@ export class CompanyService {
 		return created
 	}
 
-
 	async createWithAdmin(dto: CreateCompanyWithAdminDto, currentUser: UserModel) {
 		const adminLogin = dto.adminLogin.trim()
 		if (!adminLogin) throw new BadRequestException('adminLogin обязателен')
@@ -87,7 +86,6 @@ export class CompanyService {
 			company: company._id,
 		} as any)
 
-
 		let seedReport: any = null
 		if (dto.seedRoles || dto.seedProducts) {
 			try {
@@ -121,7 +119,6 @@ export class CompanyService {
 			.populate('role')
 			.exec()
 	}
-
 
 	async listUsers(companyId: string) {
 		return this.userModel

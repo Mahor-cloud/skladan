@@ -42,7 +42,6 @@ export class InventoryService {
 			)
 		}
 
-
 		const [openOrders, openPurchases] = await Promise.all([
 			this.orderModel.countDocuments({ isCompleted: false }).exec(),
 			this.purchaseModel.countDocuments({ isCompleted: false }).exec(),
@@ -66,7 +65,6 @@ export class InventoryService {
 			...(companyId ? { company: companyId } : {}),
 			items: products.map((product) => ({
 				product: product._id,
-
 
 				newQuantity: prefillFromStock ? product.quantity : 0,
 				quantity: product.quantity,
@@ -123,7 +121,6 @@ export class InventoryService {
 			}
 		}
 
-
 		const oldItemsMap = new Map<string, { newQuantity: number; quantity: number }>(
 			oldInventory.items.map((it: any) => [String(it.product), { newQuantity: it.newQuantity, quantity: it.quantity }])
 		)
@@ -174,7 +171,6 @@ export class InventoryService {
 		const inventory = await this.inventoryModel.findById(id).exec()
 		if (!inventory) throw new BadRequestException('Инвентаризация не найдена')
 
-
 		if (inventory.isCompleted) {
 			if (!editReason || !editReason.trim()) {
 				throw new BadRequestException('При удалении завершённой инвентаризации укажите причину (editReason)')
@@ -218,8 +214,6 @@ export class InventoryService {
 				.exec()
 		}
 	}
-
-
 
 	private async applyDeltas(
 		newItems: { product: Ref<Product>; newQuantity: number; quantity: number }[],

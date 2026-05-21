@@ -44,8 +44,6 @@ export class DatabaseService {
 		this.realtime.emit(ctx?.company ? String(ctx.company) : null, 'message-updated')
 	}
 
-
-
 	async getMsgs(): Promise<Message> {
 		return await this.messageModel.findOne().exec()
 	}
@@ -74,8 +72,6 @@ export class DatabaseService {
 		this.emitMsgChanged()
 		return res
 	}
-
-
 
 	async exportCompanyData(): Promise<any> {
 		return {
@@ -117,8 +113,6 @@ export class DatabaseService {
 			}
 		}
 
-
-
 		const sanitize = (arr?: any[]) =>
 			(arr || []).map(({ _id, __v, company, ...rest }) => ({
 				...rest,
@@ -132,7 +126,6 @@ export class DatabaseService {
 				isAdmin: !!u.isAdmin,
 				refreshToken: null,
 			}))
-
 
 		await Promise.all([
 			this.userModel.deleteMany({}),
@@ -166,8 +159,6 @@ export class DatabaseService {
 		if (subscriptions.length) await this.subscriptionModel.insertMany(subscriptions)
 		if (changeHistories.length) await this.changeHistoryModel.insertMany(changeHistories)
 	}
-
-
 
 	async exportFullData(): Promise<any> {
 		return {

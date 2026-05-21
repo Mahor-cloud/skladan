@@ -32,7 +32,6 @@ export class ObservabilityController {
 		return this.snapshots.getLatest()
 	}
 
-
 	@SuperAdminAuth()
 	@Throttle({ default: { limit: 30, ttl: 60_000 } })
 	@Get('live')

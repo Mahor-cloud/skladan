@@ -26,7 +26,6 @@ export class HttpMetricsInterceptor implements NestInterceptor {
 		const method = String(req.method || 'GET').toUpperCase()
 		const start = process.hrtime.bigint()
 
-
 		try {
 			const u = req.user
 			if (u?._id && u?.company) {

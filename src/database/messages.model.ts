@@ -26,8 +26,6 @@ export class Message {
 	@prop()
 	receivedMessage: string
 
-
-
 	@prop({ default: 0, min: 0 })
 	targetWarehouseValue: number
 }

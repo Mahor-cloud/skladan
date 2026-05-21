@@ -72,14 +72,11 @@ export class StatisticsService {
 		const productIds = toObjectIds(toArr(query.products))
 		const categories = toArr(query.categories)
 
-
 		const topLimit = Math.min(Math.max(toNum(query.topLimit, 1000), 1), 1000)
-
 
 		const ordersMatch: any = { ...periodMatch(range, 'orderDate') }
 		if (userIds) ordersMatch.user = { $in: userIds }
 		if (productIds) {
-
 
 			const dualIds: any[] = [
 				...productIds,
@@ -87,7 +84,6 @@ export class StatisticsService {
 			]
 			ordersMatch['items.product'] = { $in: dualIds }
 		}
-
 
 		const ordersAgg = await this.orderModel.aggregate([
 			{ $match: ordersMatch },
@@ -107,7 +103,6 @@ export class StatisticsService {
 		const turnover = o.createdAmount
 		const avgOrderValue = o.createdCount > 0 ? Math.round(turnover / o.createdCount) : 0
 		const completionRate = o.createdCount > 0 ? Math.round((o.completedCount / o.createdCount) * 100) : 0
-
 
 		const ordersByDay = productIds
 			? await this.orderModel.aggregate([
@@ -167,7 +162,6 @@ export class StatisticsService {
 				{ $sort: { _id: 1 } },
 				{ $project: { _id: 0, date: '$_id', amount: 1, ordersCount: 1, completedCount: 1 } },
 			])
-
 
 		const purchaseMatch: any = {
 			...periodMatch(range, 'purchaseDate'),
@@ -233,7 +227,6 @@ export class StatisticsService {
 				{ $project: { _id: 0, date: '$_id', amount: 1, purchasesCount: 1, completedCount: 1 } },
 			])
 
-
 		const purchasedByProduct = await this.purchaseModel.aggregate([
 			{ $match: purchaseMatch },
 			{ $unwind: '$items' },
@@ -249,8 +242,6 @@ export class StatisticsService {
 		const receivedMap = new Map<string, number>(
 			purchasedByProduct.map((r: any) => [String(r._id), Number(r.received || 0)])
 		)
-
-
 
 		const topProductsFacet = await this.orderModel.aggregate([
 			{ $match: ordersMatch },
@@ -304,8 +295,6 @@ export class StatisticsService {
 		])
 		const topProducts = topProductsFacet[0]?.byAmount || []
 		const topProductsByQuantity = topProductsFacet[0]?.byQuantity || []
-
-
 
 		const soldMap = new Map<string, number>(
 			(topProductsByQuantity || []).map((r: any) => [
@@ -446,7 +435,6 @@ export class StatisticsService {
 				{ $project: { _id: 0, userId: '$_id', name: '$user.name', amount: 1, ordersCount: 1, completedCount: 1 } },
 			])
 
-
 		const categoryDistribution = await this.orderModel.aggregate([
 			{ $match: ordersMatch },
 			{ $unwind: '$items' },
@@ -486,7 +474,6 @@ export class StatisticsService {
 			...c,
 			percentage: totalCat > 0 ? Math.round((c.amount / totalCat) * 1000) / 10 : 0,
 		}))
-
 
 		const ordersList = await this.orderModel
 			.find(ordersMatch)

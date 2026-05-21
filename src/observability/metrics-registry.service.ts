@@ -20,7 +20,6 @@ export class MetricsRegistryService implements OnModuleInit {
 	readonly httpRequestDuration: promClient.Histogram<'method' | 'route' | 'status'>
 	readonly httpRequestsTotal: promClient.Counter<'method' | 'route' | 'status'>
 
-
 	private peaks = new Map<string, number>()
 
 	constructor() {
@@ -114,12 +113,10 @@ export class MetricsRegistryService implements OnModuleInit {
 		return this.registry.metrics()
 	}
 
-
 	bumpPeak(key: string, value: number): void {
 		const cur = this.peaks.get(key) || 0
 		if (value > cur) this.peaks.set(key, value)
 	}
-
 
 	consumePeaks(): Record<string, number> {
 		const drained = this.peaks
@@ -128,7 +125,6 @@ export class MetricsRegistryService implements OnModuleInit {
 		for (const [k, v] of drained) out[`${k}_peak_5m`] = v
 		return out
 	}
-
 
 	async toFlatJson(): Promise<Record<string, number>> {
 		const raw = await this.registry.getMetricsAsJSON()

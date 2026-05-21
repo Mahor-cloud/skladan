@@ -50,7 +50,6 @@ export class CompanyController {
 		return this.companyService.listAdmins(id)
 	}
 
-
 	@Get(':id/users')
 	@SuperAdminAuth()
 	@UsePipes(IdValidationPipe)
