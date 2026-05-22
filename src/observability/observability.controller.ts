@@ -4,7 +4,6 @@
  */
 
 import { Controller, Get, Header, Query } from '@nestjs/common'
-import { Throttle } from '@nestjs/throttler'
 import { SuperAdminAuth } from '../auth/decorators/super-admin-auth.decorator'
 import { MetricsRegistryService } from './metrics-registry.service'
 import { SnapshotService } from './snapshot.service'
@@ -17,7 +16,6 @@ export class ObservabilityController {
 	) {}
 
 	@SuperAdminAuth()
-	@Throttle({ default: { limit: 30, ttl: 60_000 } })
 	@Get('metrics')
 	@Header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
 	async getPrometheusMetrics(): Promise<string> {
@@ -26,14 +24,12 @@ export class ObservabilityController {
 	}
 
 	@SuperAdminAuth()
-	@Throttle({ default: { limit: 30, ttl: 60_000 } })
 	@Get('snapshot')
 	async getCurrentSnapshot() {
 		return this.snapshots.getLatest()
 	}
 
 	@SuperAdminAuth()
-	@Throttle({ default: { limit: 30, ttl: 60_000 } })
 	@Get('live')
 	async getLive() {
 		await this.snapshots.refreshAll()
@@ -44,10 +40,8 @@ export class ObservabilityController {
 	}
 
 	@SuperAdminAuth()
-	@Throttle({ default: { limit: 10, ttl: 60_000 } })
 	@Get('history')
 	async getHistory(@Query('hours') hours?: string) {
-
 		const max = 90 * 24
 		const h = hours ? Math.max(1, Math.min(max, Number(hours) || 24)) : 24
 		const rows = await this.snapshots.getHistory(h)
