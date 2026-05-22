@@ -121,11 +121,11 @@ export class PurchasesService {
 			? await this.roleModel.findById(currentUser.role).exec()
 			: null
 		const userPerms = userRole?.permissions || []
-		const isAdmin = !!currentUser.isAdmin
-		const canExceedTarget = isAdmin || userPerms.includes('approve_target_exceed')
+		const isMainAdmin = userRole?.isSystem === true
+		const canExceedTarget = isMainAdmin || userPerms.includes('approve_target_exceed')
 
 		const canApprovePayment =
-			isAdmin || userPerms.includes('approve-payment')
+			isMainAdmin || userPerms.includes('approve-payment')
 		if (
 			updatePurchaseDto.isPaid === true &&
 			!oldPurchase.isPaid &&
@@ -158,7 +158,7 @@ export class PurchasesService {
 			)
 			if (itemsChanged) {
 				const canEditPurchases =
-					isAdmin || userPerms.includes('edit_purchases')
+					isMainAdmin || userPerms.includes('edit_purchases')
 				if (!canEditPurchases) {
 					throw new ForbiddenException(
 						'Изменение позиций закупки доступно только с правом редактирования закупок'

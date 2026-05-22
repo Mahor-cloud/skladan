@@ -26,7 +26,7 @@ export class ProductsService {
 		currentUser: UserModel
 	): Promise<Product> {
 		const companyId = (currentUser as any).company ? String((currentUser as any).company) : null
-		if (!currentUser.isAdmin) {
+		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (createProductDto as any).targetQty
 		}
 		const createdProduct = new this.productModel({
@@ -86,7 +86,7 @@ export class ProductsService {
 		updateProductDto: UpdateProductDto,
 		currentUser: UserModel
 	): Promise<Product> {
-		if (!currentUser.isAdmin) {
+		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (updateProductDto as any).targetQty
 		}
 		const oldProduct = await this.productModel.findById(id).exec()
