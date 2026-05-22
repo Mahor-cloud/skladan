@@ -9,6 +9,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
 import { TypegooseModule } from 'nestjs-typegoose'
 import { AuthModule } from '../auth/auth.module'
 import { UserModel } from '../auth/user.model'
+import { ChangeHistoryModule } from '../change-history/change-history.module'
 import { getJwtConfig } from '../configs/jwt.config'
 import { Role } from '../roles/role.model'
 import { SeedsModule } from '../seeds/seeds.module'
@@ -27,6 +28,7 @@ import { CompanyService } from './company.service'
 		}),
 		forwardRef(() => AuthModule),
 		forwardRef(() => SeedsModule),
+		forwardRef(() => ChangeHistoryModule),
 	],
 	controllers: [CompanyController],
 	providers: [CompanyService],

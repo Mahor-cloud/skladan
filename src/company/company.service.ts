@@ -9,6 +9,7 @@ import { ModelType } from '@typegoose/typegoose/lib/types'
 import { genSalt, hash } from 'bcryptjs'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from '../auth/user.model'
+import { RealtimeService } from '../change-history/realtime.service'
 import { ALL_PERMISSIONS, Role } from '../roles/role.model'
 import { SeedsService } from '../seeds/seeds.service'
 import { Company } from './company.model'
@@ -27,7 +28,8 @@ export class CompanyService {
 		@InjectModel(Role) private readonly roleModel: ModelType<Role>,
 		private readonly jwtService: JwtService,
 		@Inject(forwardRef(() => SeedsService))
-		private readonly seedsService: SeedsService
+		private readonly seedsService: SeedsService,
+		private readonly realtime: RealtimeService
 	) {}
 
 	async create(dto: CreateCompanyDto, currentUser: UserModel): Promise<Company> {
@@ -216,6 +218,7 @@ export class CompanyService {
 			.setOptions({ skipTenantScope: true } as any)
 			.exec()
 		if (!updated) throw new NotFoundException('Компания не найдена')
+		this.realtime.emit(String(id), 'company-disabled')
 		return updated
 	}
 
@@ -239,6 +242,8 @@ export class CompanyService {
 			.setOptions({ skipTenantScope: true } as any)
 			.exec()
 		if (!company) throw new NotFoundException('Компания не найдена')
+
+		this.realtime.emit(String(id), 'company-removed')
 
 		const skip = { skipTenantScope: true } as any
 		const companyFilter = { company: company._id }
