@@ -102,7 +102,7 @@ export class OrdersService {
 	}
 
 	async createOrder(
-		createOrderDto: CreateOrderDto[] & { approveTargetExceed?: boolean },
+		createOrderDto: CreateOrderDto[],
 		currentUser: UserModel
 	): Promise<Order> {
 		const companyId = String((currentUser as any).company || currentUser.company)
@@ -121,12 +121,7 @@ export class OrdersService {
 			})
 		}
 
-		const approveTargetExceed = Array.isArray(createOrderDto)
-			? (createOrderDto as any[]).some((i) => i?.__approveTargetExceed === true)
-			: (createOrderDto as any)?.__approveTargetExceed === true
-		const items: CreateOrderDto[] = Array.isArray(createOrderDto)
-			? (createOrderDto as any[]).filter((i) => !i.__approveTargetExceed)
-			: []
+		const items: CreateOrderDto[] = Array.isArray(createOrderDto) ? createOrderDto : []
 
 		if (!items.length) {
 			throw new BadRequestException('Заказ должен содержать хотя бы одну позицию')
@@ -137,28 +132,6 @@ export class OrdersService {
 			? await this.productModel.find({ _id: { $in: productIds } }).exec()
 			: []
 		const productById = new Map(products.map((p) => [String(p._id), p]))
-
-		const userRole = currentUser.role
-			? await this.roleModel.findById(currentUser.role).exec()
-			: null
-		const canApproveExceed =
-			currentUser.isAdmin ||
-			(userRole?.permissions || []).includes('approve_target_exceed')
-		for (const it of items) {
-			const product = productById.get(String(it.product))
-			if (product && product.targetQty > 0 && it.quantity > product.targetQty) {
-				if (!canApproveExceed || !approveTargetExceed) {
-					throw new BadRequestException({
-						code: 'TARGET_EXCEED',
-						product: String(product._id),
-						productName: product.name,
-						targetQty: product.targetQty,
-						requested: it.quantity,
-						message: `По товару "${product.name}" указано не больше ${product.targetQty} (запрошено ${it.quantity}). Требуется подтверждение администратора.`,
-					})
-				}
-			}
-		}
 
 		await this.assertStockAvailable(
 			items.map((i) => ({ product: String(i.product), quantity: i.quantity })),
@@ -318,7 +291,6 @@ export class OrdersService {
 
 		const patch: any = { ...updateOrderDto }
 		delete patch.editReason
-		delete patch.approveTargetExceed
 
 		let newTotalAmount = oldOrder.totalAmount || 0
 		let productById = new Map<string, any>()
@@ -335,29 +307,6 @@ export class OrdersService {
 				productById,
 				String(oldOrder._id)
 			)
-
-			const canApproveExceed =
-				isAdmin ||
-				(userRole?.permissions || []).includes('approve_target_exceed')
-			for (const it of updateOrderDto.items) {
-				const product = productById.get(String(it.product))
-				if (
-					product &&
-					product.targetQty > 0 &&
-					it.quantity > product.targetQty
-				) {
-					if (!canApproveExceed || !updateOrderDto.approveTargetExceed) {
-						throw new BadRequestException({
-							code: 'TARGET_EXCEED',
-							product: String(product._id),
-							productName: product.name,
-							targetQty: product.targetQty,
-							requested: it.quantity,
-							message: `По товару "${product.name}" указано не больше ${product.targetQty} (запрошено ${it.quantity}). Требуется подтверждение администратора.`,
-						})
-					}
-				}
-			}
 
 			newTotalAmount = 0
 			for (const item of updateOrderDto.items) {

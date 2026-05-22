@@ -58,8 +58,4 @@ export class UpdateOrderDto {
 	@IsString()
 	@MaxLength(500)
 	editReason?: string
-
-	@IsOptional()
-	@IsBoolean()
-	approveTargetExceed?: boolean
 }

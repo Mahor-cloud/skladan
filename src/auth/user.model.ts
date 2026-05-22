@@ -42,6 +42,12 @@ export class UserModel {
 	@prop()
 	refreshToken?: string
 
+	@prop({ default: 0 })
+	tokenVersion?: number
+
+	@prop({ default: false })
+	cabinetInitialized?: boolean
+
 	@prop({ default: null })
 	deletedAt?: Date
 }

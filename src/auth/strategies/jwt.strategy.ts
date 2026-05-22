@@ -9,6 +9,7 @@ import { PassportStrategy } from '@nestjs/passport'
 import { ModelType } from '@typegoose/typegoose/lib/types'
 import { InjectModel } from 'nestjs-typegoose'
 import { ExtractJwt, Strategy } from 'passport-jwt'
+import { Company } from '../../company/company.model'
 import { UserModel } from '../user.model'
 
 interface JwtPayload {
@@ -16,13 +17,15 @@ interface JwtPayload {
 	company?: string | null
 	isSuperAdmin?: boolean
 	login?: string
+	tokenVersion?: number
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
 	constructor(
 		private readonly configService: ConfigService,
-		@InjectModel(UserModel) private readonly UserModel: ModelType<UserModel>
+		@InjectModel(UserModel) private readonly UserModel: ModelType<UserModel>,
+		@InjectModel(Company) private readonly companyModel: ModelType<Company>
 	) {
 		super({
 			jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -38,6 +41,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 			.exec()
 		if (!user) throw new UnauthorizedException('Пользователь не найден')
 		if (user.deletedAt) throw new UnauthorizedException('Пользователь деактивирован')
+
+		if (!user.isSuperAdmin) {
+			if ((payload.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+				throw new UnauthorizedException('SESSION_SUPERSEDED')
+			}
+			if (user.company) {
+				const company = await this.companyModel
+					.findById(user.company)
+					.setOptions({ skipTenantScope: true } as any)
+					.exec()
+				if (!company || company.deletedAt) {
+					throw new UnauthorizedException('COMPANY_REMOVED')
+				}
+				if (company.isActive === false) {
+					throw new UnauthorizedException('COMPANY_DISABLED')
+				}
+			}
+		}
 
 		;(user as any).isSuperAdmin = !!user.isSuperAdmin
 		;(user as any).company = user.company ?? null

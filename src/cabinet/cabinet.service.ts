@@ -32,12 +32,29 @@ export class CabinetService {
 		@InjectModel(CabinetItem) private readonly cabinetModel: ModelType<CabinetItem>,
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Order) private readonly orderModel: ModelType<Order>,
+		@InjectModel(UserModel) private readonly userModel: ModelType<UserModel>,
 		private readonly realtime: RealtimeService
 	) {}
 
 	private emitCabinetChanged() {
 		const ctx = getTenantContext()
 		this.realtime.emit(ctx?.company ? String(ctx.company) : null, 'cabinet-updated')
+	}
+
+	async getStatus(user: UserModel): Promise<{ initialized: boolean }> {
+		const fresh = await this.userModel
+			.findById(user._id)
+			.setOptions({ skipTenantScope: true } as any)
+			.select('cabinetInitialized')
+			.exec()
+		return { initialized: !!(fresh as any)?.cabinetInitialized }
+	}
+
+	async markInitialized(user: UserModel): Promise<{ initialized: boolean }> {
+		await this.userModel
+			.updateOne({ _id: user._id }, { $set: { cabinetInitialized: true } })
+			.setOptions({ skipTenantScope: true } as any)
+		return { initialized: true }
 	}
 
 	async findAllForUser(user: UserModel): Promise<CabinetItem[]> {

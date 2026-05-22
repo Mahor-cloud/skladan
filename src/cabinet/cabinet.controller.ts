@@ -46,6 +46,18 @@ export class CabinetController {
 		return this.cabinetService.getOrdersSummaryForUser(currentUser)
 	}
 
+	@Get('status')
+	@Auth('user', ['cabinet_access'])
+	getStatus(@CurrentUser() currentUser: UserModel) {
+		return this.cabinetService.getStatus(currentUser)
+	}
+
+	@Post('init')
+	@Auth('user', ['cabinet_access'])
+	markInitialized(@CurrentUser() currentUser: UserModel) {
+		return this.cabinetService.markInitialized(currentUser)
+	}
+
 	@Post()
 	@Auth('user', ['cabinet_access'])
 	create(@Body() dto: CreateCabinetItemDto, @CurrentUser() currentUser: UserModel) {

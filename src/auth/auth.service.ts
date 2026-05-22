@@ -38,6 +38,13 @@ export class AuthService {
 
 			throw new UnauthorizedException('Неверный логин или пароль')
 		}
+		if (!user.isSuperAdmin) {
+			user.tokenVersion = (user.tokenVersion || 0) + 1
+			await this.UserModel.updateOne(
+				{ _id: user._id },
+				{ $set: { tokenVersion: user.tokenVersion } }
+			).setOptions({ skipTenantScope: true } as any)
+		}
 		const tokens = await this.issueTokenPair(user)
 		return {
 			user: this.returnUserFields(user),
@@ -91,6 +98,19 @@ export class AuthService {
 			throw new UnauthorizedException('SESSION_SUPERSEDED')
 		}
 
+		if (user.company && !user.isSuperAdmin) {
+			const company = await this.companyModel
+				.findById(user.company)
+				.setOptions({ skipTenantScope: true } as any)
+				.exec()
+			if (!company || company.deletedAt) {
+				throw new UnauthorizedException('COMPANY_REMOVED')
+			}
+			if (company.isActive === false) {
+				throw new UnauthorizedException('COMPANY_DISABLED')
+			}
+		}
+
 		const tokens = await this.issueTokenPair(user)
 
 		return {
@@ -105,6 +125,7 @@ export class AuthService {
 			company: user.company ? String(user.company) : null,
 			isSuperAdmin: !!user.isSuperAdmin,
 			login: user.login,
+			tokenVersion: user.tokenVersion || 0,
 		}
 
 		const refreshToken = await this.jwtService.signAsync(data, {
