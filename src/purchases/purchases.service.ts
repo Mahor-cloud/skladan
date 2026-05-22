@@ -188,7 +188,9 @@ export class PurchasesService {
 			patch.totalAmount = total
 			patch.totalConfirmedAmount = totalConfirmed
 
-			if (!canExceedTarget) {
+			const isDraftSave =
+				!oldPurchase.isCreated && updatePurchaseDto.isCreated !== true
+			if (!canExceedTarget && !isDraftSave) {
 				const oldQtyByProduct = new Map(
 					(oldPurchase.items || []).map((i: any) => [
 						String(i.product),
