@@ -688,21 +688,42 @@ export class OrdersService {
 	}
 
 	async remove(id: string, currentUser: UserModel): Promise<Order> {
-		const order = await this.orderModel.findById(id).exec()
+		const order = await this.orderModel
+			.findById(id)
+			.populate('items.product')
+			.exec()
 		if (!order) throw new NotFoundException('Заказ не найден')
 
-		if (
-			order.user.toString() !== currentUser._id.toString() &&
-			!currentUser.isAdmin
-		) {
+		const isMainAdmin = (currentUser.role as any)?.isSystem === true
+		const isOwner = order.user.toString() === currentUser._id.toString()
+
+		if (!isOwner && !isMainAdmin && !currentUser.isAdmin) {
 			throw new ForbiddenException('У вас нет прав для доступа к этому заказу')
 		}
 
-		if (order.isCompleted) {
-			throw new BadRequestException('Заказ уже завершен — нельзя удалить')
+		const wasCompleted = !!order.isCompleted
+		if (wasCompleted && !isMainAdmin) {
+			throw new BadRequestException(
+				'Завершённый заказ может удалить только главный администратор'
+			)
 		}
 
 		const removedOrder = await this.orderModel.findByIdAndDelete(id).exec()
+
+		let returnedSummary = ''
+		if (wasCompleted) {
+			const restored: string[] = []
+			for (const item of order.items || []) {
+				const prod: any = item.product
+				const qty = Number(item.quantity) || 0
+				if (!prod || qty <= 0) continue
+				await this.productModel
+					.updateOne({ _id: prod._id }, { $inc: { quantity: qty } })
+					.exec()
+				restored.push(`${prod.name} — ${qty} шт`)
+			}
+			returnedSummary = restored.join(', ')
+		}
 
 		const refundAmount =
 			removedOrder.paidAmount && removedOrder.paidAmount > 0
@@ -716,7 +737,10 @@ export class OrdersService {
 			relatedUser: removedOrder.user,
 			changeType: 'order-deleted',
 			description:
-				`${currentUser.name}: Заказ ${removedOrder.orderNumber} удален.` +
+				`${currentUser.name}: Заказ ${removedOrder.orderNumber} удалён.` +
+				(wasCompleted
+					? ` Возвращено на склад: ${returnedSummary || 'нет позиций'}.`
+					: '') +
 				(refundAmount > 0
 					? ` Заказ был оплачен — требуется возврат ${refundAmount} руб.`
 					: ''),
