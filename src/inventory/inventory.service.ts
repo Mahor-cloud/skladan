@@ -121,6 +121,21 @@ export class InventoryService {
 			}
 		}
 
+		if (!wasCompleted && updateInventoryDto.isCompleted === true) {
+			const [openOrders, openPurchases] = await Promise.all([
+				this.orderModel.countDocuments({ isCompleted: false }).exec(),
+				this.purchaseModel.countDocuments({ isCompleted: false }).exec(),
+			])
+			if (openOrders > 0 || openPurchases > 0) {
+				const parts: string[] = []
+				if (openOrders > 0) parts.push(`незавершённых заказов: ${openOrders}`)
+				if (openPurchases > 0) parts.push(`незавершённых закупок: ${openPurchases}`)
+				throw new BadRequestException(
+					`Нельзя завершить инвентаризацию: есть ${parts.join(' и ')}. Сначала завершите все заказы и закупки.`
+				)
+			}
+		}
+
 		const oldItemsMap = new Map<string, { newQuantity: number; quantity: number }>(
 			oldInventory.items.map((it: any) => [String(it.product), { newQuantity: it.newQuantity, quantity: it.quantity }])
 		)

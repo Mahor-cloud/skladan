@@ -7,6 +7,7 @@ import { forwardRef, Module } from '@nestjs/common'
 import { TypegooseModule } from 'nestjs-typegoose'
 import { AuthModule } from 'src/auth/auth.module'
 import { ChangeHistoryModule } from 'src/change-history/change-history.module'
+import { Inventory } from 'src/inventory/inventory.model'
 import { ProductsModule } from 'src/products/products.module'
 import { Role } from 'src/roles/role.model'
 import { Purchase } from './purchase.model'
@@ -26,6 +27,12 @@ import { PurchasesService } from './purchases.service'
 				typegooseClass: Role,
 				schemaOptions: {
 					collection: 'Roles',
+				},
+			},
+			{
+				typegooseClass: Inventory,
+				schemaOptions: {
+					collection: 'Inventory',
 				},
 			},
 		]),

@@ -8,6 +8,7 @@ import { ModelType } from '@typegoose/typegoose/lib/types'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
+import { Inventory } from 'src/inventory/inventory.model'
 import { Order } from 'src/orders/order.model'
 import { CreateProductDto } from './dto/create-product.dto'
 import { UpdateProductDto } from './dto/update-product.dto'
@@ -18,13 +19,28 @@ export class ProductsService {
 	constructor(
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Order) private readonly orderModel: ModelType<Order>,
+		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
 		private readonly changeHistoryService: ChangeHistoryService
 	) {}
+
+	private async assertNoActiveInventory(): Promise<void> {
+		const active = await this.inventoryModel
+			.findOne({ isCompleted: false })
+			.exec()
+		if (active) {
+			throw new BadRequestException({
+				code: 'ACTIVE_INVENTORY',
+				message:
+					'Идёт инвентаризация — изменение товаров запрещено. Сначала завершите инвентаризацию.',
+			})
+		}
+	}
 
 	async createProduct(
 		createProductDto: CreateProductDto,
 		currentUser: UserModel
 	): Promise<Product> {
+		await this.assertNoActiveInventory()
 		const companyId = (currentUser as any).company ? String((currentUser as any).company) : null
 		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (createProductDto as any).targetQty
@@ -86,6 +102,7 @@ export class ProductsService {
 		updateProductDto: UpdateProductDto,
 		currentUser: UserModel
 	): Promise<Product> {
+		await this.assertNoActiveInventory()
 		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (updateProductDto as any).targetQty
 		}
@@ -104,6 +121,7 @@ export class ProductsService {
 	}
 
 	async remove(id: string, currentUser: UserModel): Promise<Product> {
+		await this.assertNoActiveInventory()
 		const product = await this.productModel.findById(id).exec()
 
 		if (!product) {

@@ -14,6 +14,7 @@ import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
 import { CounterService } from 'src/common/counters/counter.service'
+import { Inventory } from 'src/inventory/inventory.model'
 import { Product } from 'src/products/product.model'
 import { ProductsService } from 'src/products/products.service'
 import { Role } from 'src/roles/role.model'
@@ -27,6 +28,7 @@ export class PurchasesService {
 		private readonly changeHistoryService: ChangeHistoryService,
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Role) private readonly roleModel: ModelType<Role>,
+		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
 		private readonly productsService: ProductsService,
 		private readonly counterService: CounterService
 	) {}
@@ -55,6 +57,18 @@ export class PurchasesService {
 		if (!companyId || companyId === 'null') {
 			throw new BadRequestException('Закупку можно создать только в контексте компании')
 		}
+
+		const activeInventory = await this.inventoryModel
+			.findOne({ isCompleted: false })
+			.exec()
+		if (activeInventory) {
+			throw new BadRequestException({
+				code: 'ACTIVE_INVENTORY',
+				message:
+					'Идёт инвентаризация — создание закупок невозможно. Сначала завершите инвентаризацию.',
+			})
+		}
+
 		const purchaseNumber = await this.counterService.getNext(companyId, 'purchase')
 
 		const products = await this.productsService.findAll()
