@@ -205,16 +205,18 @@ export class OrdersService {
 			: null
 
 		const isOwner = oldOrder.user.toString() === currentUser._id.toString()
-		const isAdmin = !!currentUser.isAdmin
-		const canApprovePayment =
-			isAdmin || (userRole?.permissions || []).includes('approve-payment')
-		const canEditOrders =
-			isAdmin || (userRole?.permissions || []).includes('edit_orders')
+		const isStaff = !!currentUser.isAdmin
+		const isMainAdmin = userRole?.isSystem === true
+		const hasEditOrdersPerm = (userRole?.permissions || []).includes('edit_orders')
+		const hasApprovePaymentPerm = (userRole?.permissions || []).includes('approve-payment')
 
-		if (!isOwner && !isAdmin && !canApprovePayment && !canEditOrders) {
+		const canEditOthersOrders = isMainAdmin || (isStaff && hasEditOrdersPerm)
+		const canApproveOthersPayment =
+			isMainAdmin || (isStaff && hasApprovePaymentPerm)
+
+		if (!isOwner && !canEditOthersOrders && !canApproveOthersPayment) {
 			throw new ForbiddenException('У вас нет прав для доступа к этому заказу')
 		}
-		const isMainAdmin = userRole?.isSystem === true
 		if (oldOrder.isCompleted) {
 			const wantsItemsEdit = Array.isArray(updateOrderDto.items)
 			if (!isMainAdmin || !wantsItemsEdit) {
@@ -237,7 +239,7 @@ export class OrdersService {
 			updateOrderDto.confirmedPaid &&
 			!oldOrder.confirmedPaid
 		) {
-			if (!userRole?.permissions?.includes('approve-payment')) {
+			if (!canApproveOthersPayment) {
 				throw new ForbiddenException('У вас нет прав для подтверждения платежа')
 			}
 		}
@@ -246,7 +248,7 @@ export class OrdersService {
 			updateOrderDto.isPaid === true &&
 			!oldOrder.isPaid &&
 			!isOwner &&
-			!canEditOrders
+			!canEditOthersOrders
 		) {
 			throw new ForbiddenException(
 				'Отметить заказ оплаченным может только заказчик или служащий с правом редактирования заказов'
@@ -276,7 +278,7 @@ export class OrdersService {
 		if (itemsChanged) {
 			const ownerStage5 = isOwner && !oldOrder.isPaid
 			const ownerStage6 = isOwner && oldOrder.isPaid && !oldOrder.confirmedPaid
-			if (!ownerStage5 && !ownerStage6 && !canEditOrders) {
+			if (!ownerStage5 && !ownerStage6 && !canEditOthersOrders) {
 				throw new ForbiddenException(
 					'У вас нет прав для изменения позиций этого заказа'
 				)
@@ -694,10 +696,16 @@ export class OrdersService {
 			.exec()
 		if (!order) throw new NotFoundException('Заказ не найден')
 
-		const isMainAdmin = (currentUser.role as any)?.isSystem === true
+		const userRole = currentUser.role
+			? await this.roleModel.findById(currentUser.role).exec()
+			: null
+		const isMainAdmin = userRole?.isSystem === true
 		const isOwner = order.user.toString() === currentUser._id.toString()
+		const isStaff = !!currentUser.isAdmin
+		const hasEditOrdersPerm = (userRole?.permissions || []).includes('edit_orders')
+		const canDeleteOthersOrders = isMainAdmin || (isStaff && hasEditOrdersPerm)
 
-		if (!isOwner && !isMainAdmin && !currentUser.isAdmin) {
+		if (!isOwner && !canDeleteOthersOrders) {
 			throw new ForbiddenException('У вас нет прав для доступа к этому заказу')
 		}
 
