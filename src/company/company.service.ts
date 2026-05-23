@@ -7,6 +7,7 @@ import { BadRequestException, forwardRef, Inject, Injectable, Logger, NotFoundEx
 import { JwtService } from '@nestjs/jwt'
 import { ModelType } from '@typegoose/typegoose/lib/types'
 import { genSalt, hash } from 'bcryptjs'
+import { createHash } from 'crypto'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from '../auth/user.model'
 import { RealtimeService } from '../change-history/realtime.service'
@@ -164,17 +165,25 @@ export class CompanyService {
 		if (!admin.company) {
 			throw new BadRequestException('У этого пользователя нет company')
 		}
+		const nextTokenVersion = (admin.tokenVersion || 0) + 1
 		const payload = {
 			_id: String(admin._id),
 			company: String(admin.company),
 			isSuperAdmin: false,
 			login: admin.login,
+			tokenVersion: nextTokenVersion,
 		}
 		const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: '30d' })
 		const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '1h' })
 
-		admin.refreshToken = await hash(refreshToken, await genSalt(10))
-		await admin.save()
+		const refreshHash = createHash('sha256').update(refreshToken).digest('hex')
+		await this.userModel
+			.updateOne(
+				{ _id: admin._id },
+				{ $set: { tokenVersion: nextTokenVersion, refreshToken: refreshHash } }
+			)
+			.setOptions({ skipTenantScope: true } as any)
+			.exec()
 		return {
 			user: {
 				_id: admin._id,
