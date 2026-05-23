@@ -114,12 +114,13 @@ export class CompanyService {
 	}
 
 	async listAdmins(companyId: string) {
-		return this.userModel
+		const admins = await this.userModel
 			.find({ company: companyId, isAdmin: true, deletedAt: null })
 			.setOptions({ skipTenantScope: true } as any)
-			.select('_id login name role isSuperAdmin')
+			.select('_id login name role isAdmin isSuperAdmin')
 			.populate('role')
 			.exec()
+		return admins.filter((u) => (u.role as any)?.isSystem === true)
 	}
 
 	async listUsers(companyId: string) {
@@ -156,6 +157,9 @@ export class CompanyService {
 		if (!admin) throw new NotFoundException('Админ не найден')
 		if (admin.isSuperAdmin) {
 			throw new BadRequestException('Нельзя залогиниться под супер-админом через impersonate')
+		}
+		if ((admin.role as any)?.isSystem !== true) {
+			throw new BadRequestException('Можно входить только под главным админом компании (с системной ролью)')
 		}
 		if (!admin.company) {
 			throw new BadRequestException('У этого пользователя нет company')
