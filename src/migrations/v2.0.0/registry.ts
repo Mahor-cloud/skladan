@@ -15,6 +15,7 @@ import { m008CreateCompoundIndexes } from './008-create-compound-indexes'
 import { m009InitCounters } from './009-init-counters'
 import { m010CleanupDeadSubscriptions } from './010-cleanup-dead-subscriptions'
 import { m011AddPerfIndexes } from './011-add-perf-indexes'
+import { m012ExtendAdminPermissions } from './012-extend-admin-permissions'
 
 export const MIGRATIONS_V2_0_0: MigrationStep[] = [
 	m001CreateDefaultCompany,
@@ -28,6 +29,7 @@ export const MIGRATIONS_V2_0_0: MigrationStep[] = [
 	m009InitCounters,
 	m010CleanupDeadSubscriptions,
 	m011AddPerfIndexes,
+	m012ExtendAdminPermissions,
 ]
 
 export const MIGRATION_VERSION = 'v2.0.0'
