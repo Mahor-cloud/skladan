@@ -71,6 +71,12 @@ export class ChangeHistoryController {
 	}
 
 	@Auth('user')
+	@Get('vapid-public-key')
+	getVapidPublicKey() {
+		return this.changeHistoryService.getVapidPublicKey()
+	}
+
+	@Auth('user')
 	@Put('subscription/preferences')
 	updateMyPreferences(
 		@CurrentUser() currentUser: UserModel,

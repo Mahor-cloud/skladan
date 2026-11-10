@@ -133,6 +133,12 @@ export class ChangeHistoryService {
 		}
 	}
 
+	// Single source of truth for the key: the frontend fetches it instead of baking it in at build time.
+	getVapidPublicKey() {
+		if (!this.vapidKeys.publicKey) throw new BadRequestException('VAPID-ключ не настроен на сервере')
+		return { publicKey: this.vapidKeys.publicKey }
+	}
+
 	async getMySubscription(currentUser: UserModel) {
 		const ctx = getTenantContext()
 		const company = ctx?.company ? new Types.ObjectId(String(ctx.company)) : null
@@ -294,12 +300,12 @@ export class ChangeHistoryService {
 					JSON.stringify({ title, body })
 				)
 			} catch (error) {
-				if (error.statusCode === 410) {
+				if (error.statusCode === 404 || error.statusCode === 410) {
 					await this.subscriptionModel
 						.deleteOne({ _id: subscription._id })
 						.setOptions({ skipTenantScope: true } as any)
 						.exec()
-					this.logger.log(`Subscription ${subscription._id} removed (410 Gone).`)
+					this.logger.log(`Subscription ${subscription._id} removed (${error.statusCode} — подписка больше не действует).`)
 				} else {
 					this.logger.error(
 						`Push delivery error endpoint=${subscription.endpoint} statusCode=${error.statusCode} message=${error.message}`
