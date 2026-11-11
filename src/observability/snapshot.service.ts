@@ -175,7 +175,7 @@ export class SnapshotService {
 	}
 
 	async getHistory(hours: number = 24): Promise<MetricSnapshot[]> {
-		const safeH = Math.max(1, Math.min(90 * 24, Math.floor(hours)))
+		const safeH = Math.max(1, Math.min(14 * 24, Math.floor(hours)))
 		const since = new Date(Date.now() - safeH * 3600 * 1000)
 		const rows = await this.snapshotModel
 			.find({ createdAt: { $gte: since } })

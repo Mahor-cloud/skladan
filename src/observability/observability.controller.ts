@@ -42,7 +42,7 @@ export class ObservabilityController {
 	@SuperAdminAuth()
 	@Get('history')
 	async getHistory(@Query('hours') hours?: string) {
-		const max = 90 * 24
+		const max = 14 * 24
 		const h = hours ? Math.max(1, Math.min(max, Number(hours) || 24)) : 24
 		const rows = await this.snapshots.getHistory(h)
 		return {
