@@ -13,6 +13,47 @@ import { ActiveUsersService } from './active-users.service'
 import { MetricsRegistryService } from './metrics-registry.service'
 import { MetricSnapshot } from './snapshot.model'
 
+// Metrics the Observability page (skladanclient Observability.vue) reads from history points:
+// exact key or its labelled form `name{...}`. Add a name here when the page charts a new metric.
+const HISTORY_METRICS = new Set([
+	'process_resident_memory_bytes',
+	'nodejs_heap_size_used_bytes',
+	'nodejs_heap_size_total_bytes',
+	'nodejs_external_memory_bytes',
+	'process_cpu_user_seconds_total',
+	'process_cpu_system_seconds_total',
+	'process_open_fds',
+	'nodejs_active_handles_total',
+	'nodejs_active_requests_total',
+	'skladan_event_loop_lag_ms',
+	'skladan_event_loop_lag_ms_peak_5m',
+	'skladan_sse_connections_active',
+	'skladan_active_users_15m',
+	'skladan_mongo_pool_used',
+	'skladan_mongo_pool_max',
+])
+
+export function historyPayload(payload: Record<string, number>): Record<string, number> {
+	const out: Record<string, number> = {}
+	for (const k of Object.keys(payload || {})) {
+		const brace = k.indexOf('{')
+		// `name{labels}_peak_5m` (consumePeaks) is skipped: the page sums `name{...}` by prefix
+		// and counted those peaks on top of the current values.
+		const name = brace < 0 ? k : k.endsWith('}') ? k.slice(0, brace) : null
+		if (name && HISTORY_METRICS.has(name)) out[k] = payload[k]
+	}
+	return out
+}
+
+// Every stride-th row plus the last one, at most ~target points (same sampling as before).
+export function samplePoints<T>(rows: T[], target: number): T[] {
+	const stride = Math.max(1, Math.ceil(rows.length / target))
+	const picked = rows.filter((_, i) => i % stride === 0)
+	const last = rows[rows.length - 1]
+	if (last !== undefined && picked[picked.length - 1] !== last) picked.push(last)
+	return picked
+}
+
 @Injectable()
 export class SnapshotService {
 	private readonly logger = new Logger(SnapshotService.name)
@@ -177,24 +218,34 @@ export class SnapshotService {
 	async getHistory(hours: number = 24): Promise<MetricSnapshot[]> {
 		const safeH = Math.max(1, Math.min(14 * 24, Math.floor(hours)))
 		const since = new Date(Date.now() - safeH * 3600 * 1000)
-		const rows = await this.snapshotModel
-			.find({ createdAt: { $gte: since } })
+		// Pass 1: ids only. A snapshot is ~32 KB; loading every one of them (4000+ for 14 days)
+		// made a 71 MB response and could run the backend out of memory.
+		const ids = await this.snapshotModel
+			.find({ createdAt: { $gte: since } }, { _id: 1 })
 			.sort({ createdAt: 1 })
 			.setOptions({ skipTenantScope: true } as any)
+			.lean()
 			.exec()
 
-		const TARGET_POINTS = 1500
-		if (rows.length <= TARGET_POINTS) return rows as MetricSnapshot[]
+		const picked = samplePoints(ids, 1500)
 
-		const stride = Math.ceil(rows.length / TARGET_POINTS)
-		const sampled: MetricSnapshot[] = []
-		for (let i = 0; i < rows.length; i += stride) {
-			sampled.push(rows[i] as MetricSnapshot)
+		// Pass 2: the picked points one by one, unsorted (a sort here made mongod buffer whole
+		// documents); order comes from pass 1. Only the first point keeps every key — the page
+		// reads per-route request counters from it.
+		// shortcut: if TTL deletes that first point between the passes, this response has no full
+		// first point ("За период" shows totals until the next 30 s refetch); fine for a rare race.
+		const firstId = String(picked[0]?._id)
+		const byId = new Map<string, MetricSnapshot>()
+		const cursor = this.snapshotModel
+			.find({ _id: { $in: picked.map((r) => r._id) } })
+			.setOptions({ skipTenantScope: true } as any)
+			.lean()
+			.cursor()
+		for await (const d of cursor) {
+			const id = String(d._id)
+			byId.set(id, { createdAt: d.createdAt, payload: id === firstId ? d.payload : historyPayload(d.payload) })
 		}
-
-		const lastRow = rows[rows.length - 1] as MetricSnapshot
-		if (sampled[sampled.length - 1] !== lastRow) sampled.push(lastRow)
-		return sampled
+		return picked.map((r) => byId.get(String(r._id))).filter(Boolean)
 	}
 
 	async getLatest(): Promise<{ createdAt: Date; payload: Record<string, number> }> {
