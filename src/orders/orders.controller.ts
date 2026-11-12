@@ -12,6 +12,7 @@ import {
 	Param,
 	Post,
 	Put,
+	Query,
 	UsePipes,
 } from '@nestjs/common'
 import { Auth } from 'src/auth/decorators/auth.decorator'
@@ -37,8 +38,8 @@ export class OrdersController {
 
 	@Get()
 	@Auth('user', ['view_orders'])
-	findAll() {
-		return this.ordersService.findAll()
+	findAll(@Query('active') active?: string, @Query('since') since?: string) {
+		return this.ordersService.findAll(active, since)
 	}
 
 	@Get('shortages')

@@ -24,6 +24,16 @@ import { CreateOrderDto } from './dto/create-order.dto'
 import { UpdateOrderDto } from './dto/update-order.dto'
 import { Order } from './order.model'
 
+// GET /orders window: active=1 → only unfinished; since=<ms> → unfinished + newer than since.
+// No params → full list, as before (old cached PWA clients still call it that way).
+export function ordersListFilter(active?: string, since?: string): Record<string, any> {
+	const unfinished = { isCompleted: { $ne: true } }
+	if (active === '1') return unfinished
+	const from = Number(since)
+	if (since && Number.isFinite(from)) return { $or: [unfinished, { orderDate: { $gte: from } }] }
+	return {}
+}
+
 @Injectable()
 export class OrdersService {
 	constructor(
@@ -166,9 +176,9 @@ export class OrdersService {
 		return createdOrder
 	}
 
-	async findAll(): Promise<Order[]> {
+	async findAll(active?: string, since?: string): Promise<Order[]> {
 		return this.orderModel
-			.find()
+			.find(ordersListFilter(active, since))
 			.populate({
 				path: 'user',
 				select: '_id name isAdmin',

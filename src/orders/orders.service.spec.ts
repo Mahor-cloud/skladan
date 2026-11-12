@@ -4,6 +4,7 @@
  */
 
 import { BadRequestException } from '@nestjs/common'
+import { ordersListFilter } from './orders.service'
 
 type StockItem = { product: string; quantity: number }
 type ProductLike = { _id: any; name: string; quantity: number; targetQty?: number }
@@ -346,5 +347,30 @@ describe('itemsEqual', () => {
 		const a = [{ product: { _id: 'p1' }, quantity: 5 }]
 		const b = [{ product: 'p1', quantity: 5 }]
 		expect(itemsEqual(a, b)).toBe(true)
+	})
+})
+
+describe('ordersListFilter', () => {
+	const unfinished = { isCompleted: { $ne: true } }
+
+	it('no params → empty filter (full list, old clients)', () => {
+		expect(ordersListFilter()).toEqual({})
+		expect(ordersListFilter(undefined, '')).toEqual({})
+	})
+
+	it('active=1 → only unfinished', () => {
+		expect(ordersListFilter('1')).toEqual(unfinished)
+		expect(ordersListFilter('1', '1700000000000')).toEqual(unfinished)
+	})
+
+	it('since=<ms> → unfinished or newer than since', () => {
+		expect(ordersListFilter(undefined, '1700000000000')).toEqual({
+			$or: [unfinished, { orderDate: { $gte: 1700000000000 } }],
+		})
+	})
+
+	it('garbage params → full list, never a broken query', () => {
+		expect(ordersListFilter('yes', 'abc')).toEqual({})
+		expect(ordersListFilter(undefined, { $gt: '' } as any)).toEqual({})
 	})
 })
