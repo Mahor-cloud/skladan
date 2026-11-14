@@ -64,6 +64,17 @@ export class DatabaseService {
 		return res
 	}
 
+	async updateInventoryOpenDocs(allow: boolean, currentUser: UserModel): Promise<Message> {
+		if ((currentUser.role as any)?.isSystem !== true) {
+			throw new ForbiddenException('Эту настройку меняет только председатель')
+		}
+		const res = await this.messageModel
+			.findOneAndUpdate({}, { allowInventoryWithOpenDocs: allow === true }, { new: true, upsert: true })
+			.exec()
+		this.emitMsgChanged()
+		return res
+	}
+
 	async updateTargetWarehouseValue(targetWarehouseValue: number): Promise<Message> {
 		const value = Math.max(0, Number(targetWarehouseValue) || 0)
 		const res = await this.messageModel

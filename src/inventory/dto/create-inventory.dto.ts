@@ -45,4 +45,8 @@ export class CreateInventoryDto {
 	@IsOptional()
 	@IsBoolean()
 	prefillFromStock?: boolean
+
+	@IsOptional()
+	@IsBoolean()
+	confirmOpenDocs?: boolean
 }

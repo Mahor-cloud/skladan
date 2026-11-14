@@ -28,4 +28,7 @@ export class Message {
 
 	@prop({ default: 0, min: 0 })
 	targetWarehouseValue: number
+
+	@prop({ default: false })
+	allowInventoryWithOpenDocs: boolean
 }

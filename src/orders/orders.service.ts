@@ -17,6 +17,8 @@ import { UserModel } from 'src/auth/user.model'
 import { CabinetService } from 'src/cabinet/cabinet.service'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
 import { CounterService } from 'src/common/counters/counter.service'
+import { Message } from 'src/database/messages.model'
+import { assertStockNotFrozen, openDocsAllowed } from 'src/inventory/inventory-lock'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Product } from 'src/products/product.model'
 import { Role } from 'src/roles/role.model'
@@ -41,6 +43,7 @@ export class OrdersService {
 		@InjectModel(Role) private readonly roleModel: ModelType<Role>,
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
+		@InjectModel(Message) private readonly messageModel: ModelType<Message>,
 		private readonly changeHistoryService: ChangeHistoryService,
 		private readonly counterService: CounterService,
 		@Inject(forwardRef(() => CabinetService))
@@ -123,7 +126,7 @@ export class OrdersService {
 		const activeInventory = await this.inventoryModel
 			.findOne({ isCompleted: false })
 			.exec()
-		if (activeInventory) {
+		if (activeInventory && !(await openDocsAllowed(this.messageModel))) {
 			throw new BadRequestException({
 				code: 'ACTIVE_INVENTORY',
 				message:
@@ -237,10 +240,20 @@ export class OrdersService {
 					'Для изменения завершённого заказа укажите причину (editReason)'
 				)
 			}
+			await assertStockNotFrozen(
+				this.inventoryModel,
+				'Идёт инвентаризация — изменение завершённых заказов недоступно до её завершения.'
+			)
 			return this.editCompletedOrderByAdmin(
 				oldOrder,
 				updateOrderDto,
 				currentUser
+			)
+		}
+		if (updateOrderDto.isCompleted === true) {
+			await assertStockNotFrozen(
+				this.inventoryModel,
+				'Идёт инвентаризация — выдача заказов заморожена до её завершения.'
 			)
 		}
 
@@ -723,6 +736,12 @@ export class OrdersService {
 		if (wasCompleted && !isMainAdmin) {
 			throw new BadRequestException(
 				'Завершённый заказ может удалить только главный администратор'
+			)
+		}
+		if (wasCompleted) {
+			await assertStockNotFrozen(
+				this.inventoryModel,
+				'Идёт инвентаризация — удаление завершённых заказов недоступно до её завершения.'
 			)
 		}
 

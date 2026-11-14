@@ -14,12 +14,27 @@ import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
 import { CounterService } from 'src/common/counters/counter.service'
+import { Message } from 'src/database/messages.model'
+import { assertStockNotFrozen, openDocsAllowed } from 'src/inventory/inventory-lock'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Product } from 'src/products/product.model'
 import { ProductsService } from 'src/products/products.service'
 import { Role } from 'src/roles/role.model'
 import { UpdatePurchaseDto } from './dto/update-purchase.dto'
 import { Purchase } from './purchase.model'
+
+type ReceiptState = { isCompleted?: boolean; partialCompleted?: boolean; items?: { product: any; confirmedQuantity?: number }[] }
+
+// Does this update receive goods, i.e. move Product.quantity ($inc in update)? Frozen while an inventory is open.
+export function purchaseReceives(old: ReceiptState, dto: ReceiptState): boolean {
+	const finalPartial = dto.partialCompleted !== undefined ? !!dto.partialCompleted : !!old.partialCompleted
+	const finalCompleted = dto.isCompleted !== undefined ? !!dto.isCompleted : !!old.isCompleted
+	const before = new Map((old.items || []).map((i) => [String(i.product), Number(i.confirmedQuantity) || 0]))
+	const confirmedChanged = (dto.items || []).some(
+		(i) => (Number(i.confirmedQuantity) || 0) !== (before.get(String(i.product)) || 0)
+	)
+	return finalCompleted || (finalPartial && (!old.partialCompleted || confirmedChanged))
+}
 
 @Injectable()
 export class PurchasesService {
@@ -29,6 +44,7 @@ export class PurchasesService {
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Role) private readonly roleModel: ModelType<Role>,
 		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
+		@InjectModel(Message) private readonly messageModel: ModelType<Message>,
 		private readonly productsService: ProductsService,
 		private readonly counterService: CounterService
 	) {}
@@ -61,7 +77,7 @@ export class PurchasesService {
 		const activeInventory = await this.inventoryModel
 			.findOne({ isCompleted: false })
 			.exec()
-		if (activeInventory) {
+		if (activeInventory && !(await openDocsAllowed(this.messageModel))) {
 			throw new BadRequestException({
 				code: 'ACTIVE_INVENTORY',
 				message:
@@ -161,6 +177,12 @@ export class PurchasesService {
 			if ((finalPartial || finalCompleted) && !oldPurchase.isPaid) {
 				throw new BadRequestException(
 					'Закупка не оплачена: частичное/полное получение и завершение недоступны'
+				)
+			}
+			if (purchaseReceives(oldPurchase as any, updatePurchaseDto)) {
+				await assertStockNotFrozen(
+					this.inventoryModel,
+					'Идёт инвентаризация — получение по закупкам заморожено до её завершения.'
 				)
 			}
 		}

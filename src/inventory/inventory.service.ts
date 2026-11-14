@@ -8,10 +8,12 @@ import { ModelType, Ref } from '@typegoose/typegoose/lib/types'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
+import { Message } from 'src/database/messages.model'
 import { Order } from 'src/orders/order.model'
 import { Product } from 'src/products/product.model'
 import { Purchase } from 'src/purchases/purchase.model'
 import { UpdateInventoryDto } from './dto/update-inventory.dto'
+import { openDocsAllowed } from './inventory-lock'
 import { Inventory } from './inventory.model'
 
 @Injectable()
@@ -25,12 +27,15 @@ export class InventoryService {
 		private readonly orderModel: ModelType<Order>,
 		@InjectModel(Purchase)
 		private readonly purchaseModel: ModelType<Purchase>,
+		@InjectModel(Message)
+		private readonly messageModel: ModelType<Message>,
 		private readonly changeHistoryService: ChangeHistoryService
 	) {}
 
 	async createInventory(
 		currentUser: UserModel,
-		prefillFromStock = false
+		prefillFromStock = false,
+		confirmOpenDocs = false
 	): Promise<Inventory> {
 
 		const activeInv = await this.inventoryModel
@@ -50,9 +55,19 @@ export class InventoryService {
 			const parts: string[] = []
 			if (openOrders > 0) parts.push(`незавершённых заказов: ${openOrders}`)
 			if (openPurchases > 0) parts.push(`незавершённых закупок: ${openPurchases}`)
-			throw new BadRequestException(
-				`Нельзя начать инвентаризацию: есть ${parts.join(' и ')}. Сначала завершите все заказы и закупки.`
-			)
+			if (!(await openDocsAllowed(this.messageModel))) {
+				throw new BadRequestException(
+					`Нельзя начать инвентаризацию: есть ${parts.join(' и ')}. Сначала завершите все заказы и закупки.`
+				)
+			}
+			if (!confirmOpenDocs) {
+				throw new BadRequestException({
+					code: 'OPEN_DOCS',
+					openOrders,
+					openPurchases,
+					message: `Незавершённых ${[openOrders > 0 && `заказов: ${openOrders}`, openPurchases > 0 && `закупок: ${openPurchases}`].filter(Boolean).join(', ')}. Пока идёт инвентаризация, заказы нельзя выдать, а закупки — провести; после её завершения они продолжатся с того же места.`,
+				})
+			}
 		}
 
 		const products = await this.productModel.find({ deletedAt: null }).exec()
@@ -121,21 +136,8 @@ export class InventoryService {
 			}
 		}
 
-		if (!wasCompleted && updateInventoryDto.isCompleted === true) {
-			const [openOrders, openPurchases] = await Promise.all([
-				this.orderModel.countDocuments({ isCompleted: false }).exec(),
-				this.purchaseModel.countDocuments({ isCompleted: false }).exec(),
-			])
-			if (openOrders > 0 || openPurchases > 0) {
-				const parts: string[] = []
-				if (openOrders > 0) parts.push(`незавершённых заказов: ${openOrders}`)
-				if (openPurchases > 0) parts.push(`незавершённых закупок: ${openPurchases}`)
-				throw new BadRequestException(
-					`Нельзя завершить инвентаризацию: есть ${parts.join(' и ')}. Сначала завершите все заказы и закупки.`
-				)
-			}
-		}
-
+		// No open-orders check on completion: stock is frozen while the inventory is open (inventory-lock.ts),
+		// so open orders/purchases can't skew the count and simply continue afterwards.
 		const oldItemsMap = new Map<string, { newQuantity: number; quantity: number }>(
 			oldInventory.items.map((it: any) => [String(it.product), { newQuantity: it.newQuantity, quantity: it.quantity }])
 		)
@@ -157,6 +159,8 @@ export class InventoryService {
 		const sanitizedDto: any = { ...updateInventoryDto }
 		delete sanitizedDto.createdBy
 		delete sanitizedDto.startDate
+		// A completed inventory can't be reopened: completing it again would $set over everything since.
+		if (wasCompleted) delete sanitizedDto.isCompleted
 
 		const updatedInventory = await this.inventoryModel
 			.findByIdAndUpdate(id, sanitizedDto, { new: true })

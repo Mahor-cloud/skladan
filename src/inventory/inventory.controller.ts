@@ -33,7 +33,8 @@ export class InventoryController {
 	) {
 		return this.inventoryService.createInventory(
 			currentUser,
-			dto?.prefillFromStock === true
+			dto?.prefillFromStock === true,
+			dto?.confirmOpenDocs === true
 		)
 	}
 

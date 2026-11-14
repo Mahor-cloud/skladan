@@ -20,7 +20,7 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator'
 import { SuperAdminAuth } from 'src/auth/decorators/super-admin-auth.decorator'
 import { UserModel } from 'src/auth/user.model'
 import { DatabaseService } from './database.service'
-import { PaymentMessageDto, ReceivedMessageDto, TargetWarehouseValueDto } from './messages.dto'
+import { InventoryOpenDocsDto, PaymentMessageDto, ReceivedMessageDto, TargetWarehouseValueDto } from './messages.dto'
 
 @Controller('database')
 export class DatabaseController {
@@ -48,6 +48,12 @@ export class DatabaseController {
 	@Put('msg/target-warehouse-value')
 	async updateTargetWarehouseValue(@Body() dto: TargetWarehouseValueDto) {
 		return this.databaseService.updateTargetWarehouseValue(dto.targetWarehouseValue)
+	}
+
+	@Auth('admin')
+	@Put('msg/inventory-open-docs')
+	async updateInventoryOpenDocs(@Body() dto: InventoryOpenDocsDto, @CurrentUser() currentUser: UserModel) {
+		return this.databaseService.updateInventoryOpenDocs(dto.allowInventoryWithOpenDocs, currentUser)
 	}
 
 	@Auth('admin', ['export-database'])

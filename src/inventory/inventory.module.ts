@@ -7,6 +7,7 @@ import { forwardRef, Module } from '@nestjs/common'
 import { TypegooseModule } from 'nestjs-typegoose'
 import { AuthModule } from 'src/auth/auth.module'
 import { ChangeHistoryModule } from 'src/change-history/change-history.module'
+import { Message } from 'src/database/messages.model'
 import { Order } from 'src/orders/order.model'
 import { ProductsModule } from 'src/products/products.module'
 import { Purchase } from 'src/purchases/purchase.model'
@@ -35,6 +36,7 @@ import { InventoryService } from './inventory.service'
 					collection: 'Purchases',
 				},
 			},
+			{ typegooseClass: Message, schemaOptions: { collection: 'Message' } },
 		]),
 		AuthModule,
 		ProductsModule,

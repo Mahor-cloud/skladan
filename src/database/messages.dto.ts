@@ -3,7 +3,7 @@
  * Licensed under Apache 2.0
  */
 
-import { IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator'
+import { IsBoolean, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator'
 
 export class MessagesDto {
 	@IsOptional()
@@ -33,4 +33,9 @@ export class TargetWarehouseValueDto {
 	@IsNumber()
 	@Min(0)
 	targetWarehouseValue: number
+}
+
+export class InventoryOpenDocsDto {
+	@IsBoolean()
+	allowInventoryWithOpenDocs: boolean
 }
