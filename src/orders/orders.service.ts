@@ -715,7 +715,8 @@ export class OrdersService {
 	async remove(id: string, currentUser: UserModel): Promise<Order> {
 		const order = await this.orderModel
 			.findById(id)
-			.populate('items.product')
+			// items.product is stored as a string: without `model` nothing is populated and stock is not returned
+			.populate({ path: 'items.product', model: 'Product' })
 			.exec()
 		if (!order) throw new NotFoundException('Заказ не найден')
 
