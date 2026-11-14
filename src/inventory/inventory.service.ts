@@ -161,13 +161,20 @@ export class InventoryService {
 		delete sanitizedDto.startDate
 		// A completed inventory can't be reopened: completing it again would $set over everything since.
 		if (wasCompleted) delete sanitizedDto.isCompleted
+		// Completing: write the count to stock while the inventory is still open (stock stays frozen),
+		// and only then close it — otherwise an issue in between is overwritten by the $set.
+		const completing = !wasCompleted && sanitizedDto.isCompleted === true
+		if (completing) delete sanitizedDto.isCompleted
 
-		const updatedInventory = await this.inventoryModel
+		let updatedInventory = await this.inventoryModel
 			.findByIdAndUpdate(id, sanitizedDto, { new: true })
 			.exec()
 
-		if (!wasCompleted && updatedInventory.isCompleted) {
+		if (completing) {
 			await this.applyCompletion(updatedInventory.items as any)
+			updatedInventory = await this.inventoryModel
+				.findByIdAndUpdate(id, { isCompleted: true }, { new: true })
+				.exec()
 		} else if (wasCompleted && updateInventoryDto.items) {
 			await this.applyDeltas(updatedInventory.items as any, oldItemsMap)
 		}

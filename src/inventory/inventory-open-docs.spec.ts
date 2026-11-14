@@ -124,6 +124,25 @@ describe('completing an inventory while orders are open', () => {
 		expect(productModel.updateOne).toHaveBeenCalledWith({ _id: 'p1' }, { $set: { quantity: 7 } })
 		expect(orderModel.countDocuments).not.toHaveBeenCalled()
 	})
+
+	it('writes the count to stock BEFORE closing the inventory (no unfrozen window for issues)', async () => {
+		const { service, InventoryModel, productModel } = makeService({ openOrders: 3 })
+		const old = { _id: 'i1', startDate: 1, isCompleted: false, comment: '', items: [{ product: 'p1', newQuantity: 0, quantity: 5 }] }
+		const items = [{ product: 'p1', newQuantity: 7, quantity: 5 }]
+		const log: string[] = []
+		InventoryModel.findById.mockReturnValue(q(old))
+		InventoryModel.findByIdAndUpdate.mockImplementation((_id: string, upd: any) => {
+			log.push(upd.isCompleted ? 'close' : 'save')
+			return q({ ...old, ...upd, items })
+		})
+		productModel.updateOne.mockImplementation(() => {
+			log.push('stock')
+			return q(undefined)
+		})
+		const res = await service.update('i1', { isCompleted: true, items }, user)
+		expect(log).toEqual(['save', 'stock', 'close'])
+		expect(res.isCompleted).toBe(true)
+	})
 })
 
 describe('a completed inventory', () => {

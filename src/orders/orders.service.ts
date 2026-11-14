@@ -327,11 +327,15 @@ export class OrdersService {
 				: []
 			productById = new Map(products.map((p) => [String(p._id), p]))
 
-			await this.assertStockAvailable(
-				updateOrderDto.items,
-				productById,
-				String(oldOrder._id)
-			)
+			// Only a changed basket is re-checked: the UI resends unchanged items with every pay/confirm,
+			// and a shortage found later (e.g. by an inventory) is caught at issue time (STOCK_SHORTAGE).
+			if (itemsChanged) {
+				await this.assertStockAvailable(
+					updateOrderDto.items,
+					productById,
+					String(oldOrder._id)
+				)
+			}
 
 			newTotalAmount = 0
 			for (const item of updateOrderDto.items) {
