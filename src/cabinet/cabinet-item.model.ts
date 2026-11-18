@@ -12,8 +12,15 @@ import { Product } from '../products/product.model'
 
 export interface CabinetItem extends Base {}
 
+// Уникальна пара «пользователь + товар каталога»; свои позиции (без product) в индекс не входят — их может быть несколько
+export const CABINET_UNIQUE_KEYS = { user: 1, product: 1, deletedAt: 1 } as const
+export const CABINET_UNIQUE_OPTIONS = {
+	unique: true,
+	partialFilterExpression: { deletedAt: null, product: { $type: 'objectId' } },
+}
+
 @plugin(tenantPlugin)
-@index({ user: 1, product: 1, deletedAt: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } })
+@index(CABINET_UNIQUE_KEYS, CABINET_UNIQUE_OPTIONS)
 @modelOptions({
 	options: {
 		allowMixed: 0,

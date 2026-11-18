@@ -3,7 +3,7 @@
  * Licensed under Apache 2.0
  */
 
-import { modelOptions, mongoose, plugin, prop, Ref } from '@typegoose/typegoose'
+import { index, modelOptions, mongoose, plugin, prop, Ref } from '@typegoose/typegoose'
 import { Base } from '@typegoose/typegoose/lib/defaultClasses'
 import { UserModel } from '../auth/user.model'
 import { tenantPlugin } from '../common/plugins/tenant.plugin'
@@ -41,6 +41,8 @@ export class PaymentEvent {
 	note?: string
 }
 
+// Ключ попытки оформления (см. createOrder): на случай двух одинаковых запросов одновременно
+@index({ user: 1, clientKey: 1 }, { unique: true, partialFilterExpression: { clientKey: { $exists: true } } })
 @plugin(tenantPlugin)
 @modelOptions({
 	options: {
@@ -61,7 +63,8 @@ export class Order {
 	isCompleted: boolean
 
 	@prop()
-	items: { product: Ref<Product>; quantity: number }[]
+	// price — цена штуки, по которой посчитана сумма заказа (см. common/line-prices); у старых заказов её может не быть
+	items: { product: Ref<Product>; quantity: number; price?: number }[]
 
 	@prop({ default: false })
 	isPaid: boolean
@@ -83,4 +86,7 @@ export class Order {
 
 	@prop()
 	comment?: string
+
+	@prop()
+	clientKey?: string
 }

@@ -31,7 +31,8 @@ export class Inventory {
 	createdBy: Ref<UserModel>
 
 	@prop()
-	items: { product: Ref<Product>; newQuantity: number; quantity: number }[]
+	// price — цена штуки на момент завершения (см. common/line-prices): открытая инвентаризация её не хранит
+	items: { product: Ref<Product>; newQuantity: number; quantity: number; price?: number }[]
 
 	@prop({ default: '' })
 	comment: string

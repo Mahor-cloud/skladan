@@ -22,12 +22,40 @@ import { assertStockNotFrozen, openDocsAllowed } from 'src/inventory/inventory-l
 import { Inventory } from 'src/inventory/inventory.model'
 import { Product } from 'src/products/product.model'
 import { Role } from 'src/roles/role.model'
+import { keptPrices, linesSum, priceLines } from 'src/common/line-prices'
 import { CreateOrderDto } from './dto/create-order.dto'
 import { UpdateOrderDto } from './dto/update-order.dto'
 import { Order } from './order.model'
 
 // GET /orders window: active=1 → only unfinished; since=<ms> → unfinished + newer than since.
 // No params → full list, as before (old cached PWA clients still call it that way).
+// Ключ попытки оформления заказа: случайная строка от клиента
+const ORDER_KEY = /^[A-Za-z0-9-]{8,64}$/
+
+// Сколько заказчик уже внёс: сумма, подтверждённая казначеем (может быть и нулём — признак подтверждения событие,
+// а не paidAmount > 0); до первого подтверждения — та, на которую он отметил оплату (событие paid), а не сумма заказа
+// после прошлой правки. У старых заказов без событий — сумма заказа.
+export function committedAmount(order: Pick<Order, 'paidAmount' | 'totalAmount' | 'paymentEvents'>): number {
+	const events = order.paymentEvents || []
+	if (order.paidAmount > 0 || events.some((e) => e.type === 'payment-confirmed')) return order.paidAmount || 0
+	const paid = events.find((e) => e.type === 'paid')
+	return paid?.amount ?? order.totalAmount ?? 0
+}
+
+// Сколько вернуть при удалении заказа. У завершённого правки после подтверждения уже рассчитаны отдельными записями
+// (см. editCompletedOrderByAdmin), поэтому к подтверждённой сумме прибавляются их разницы; без подтверждения в событиях — сумма заказа.
+export function refundOnRemove(order: Pick<Order, 'isPaid' | 'isCompleted' | 'paidAmount' | 'totalAmount' | 'paymentEvents'>): number {
+	if (!order.isPaid && !(order.paidAmount > 0)) return 0
+	if (!order.isCompleted) return committedAmount(order)
+	const events = order.paymentEvents || []
+	const confirmedAt = events.map((e) => e.type).lastIndexOf('payment-confirmed')
+	if (confirmedAt < 0) return order.totalAmount || 0
+	return events
+		.slice(confirmedAt + 1)
+		.filter((e) => e.type === 'items-changed')
+		.reduce((sum, e) => sum + (e.amount || 0), order.paidAmount || 0)
+}
+
 export function ordersListFilter(active?: string, since?: string): Record<string, any> {
 	const unfinished = { isCompleted: { $ne: true } }
 	if (active === '1') return unfinished
@@ -116,12 +144,37 @@ export class OrdersService {
 
 	async createOrder(
 		createOrderDto: CreateOrderDto[],
-		currentUser: UserModel
+		currentUser: UserModel,
+		clientKey?: string
 	): Promise<Order> {
 		const companyId = String((currentUser as any).company || currentUser.company)
 		if (!companyId || companyId === 'null') {
 			throw new BadRequestException('Заказ можно создать только в контексте компании')
 		}
+
+		// Повтор той же отправки (ответ не дошёл, нажали ещё раз) возвращает уже созданный заказ. Проверка первой:
+		// товар под него уже занят, и повтор иначе упёрся бы в остатки.
+		const key = typeof clientKey === 'string' && ORDER_KEY.test(clientKey) ? clientKey : undefined
+		if (!key) return this.placeOrder(createOrderDto, currentUser, companyId)
+		const sameAttempt = () => this.orderModel.findOne({ user: currentUser._id, clientKey: key }).exec()
+		const existing = await sameAttempt()
+		if (existing) return existing
+		try {
+			return await this.placeOrder(createOrderDto, currentUser, companyId, key)
+		} catch (e) {
+			// Такой же запрос мог успеть первым: тогда этот упёрся в занятые им остатки или в уникальный индекс
+			const first = await sameAttempt()
+			if (first) return first
+			throw e
+		}
+	}
+
+	private async placeOrder(
+		createOrderDto: CreateOrderDto[],
+		currentUser: UserModel,
+		companyId: string,
+		clientKey?: string
+	): Promise<Order> {
 
 		const activeInventory = await this.inventoryModel
 			.findOne({ isCompleted: false })
@@ -139,6 +192,10 @@ export class OrdersService {
 		if (!items.length) {
 			throw new BadRequestException('Заказ должен содержать хотя бы одну позицию')
 		}
+		// Тело запроса — массив, и проверка полей по DTO к нему не применяется
+		if (!items.every((i) => typeof i?.product === 'string' && /^[0-9a-f]{24}$/i.test(i.product) && Number.isInteger(i.quantity) && i.quantity >= 1)) {
+			throw new BadRequestException('Позиция заказа: нужен товар и целое количество от 1')
+		}
 
 		const productIds = items.map((i) => i.product).filter(Boolean)
 		const products = productIds.length
@@ -154,18 +211,21 @@ export class OrdersService {
 
 		const orderNumber = await this.counterService.getNext(companyId, 'order')
 
-		let totalAmount = 0
-		for (const item of items) {
-			const product = productById.get(String(item.product))
-			if (product) totalAmount += (item.quantity || 0) * (product.price || 0)
-		}
+		// В строку идёт цена, по которой посчитана сумма; из запроса берутся только товар и количество
+		const pricedItems = priceLines(
+			items.map((item) => ({ product: item.product, quantity: item.quantity })),
+			new Map(),
+			(id) => productById.get(id)?.price || 0
+		)
+		const totalAmount = linesSum(pricedItems)
 
 		const createdOrder = new this.orderModel({
 			orderNumber,
-			items,
+			items: pricedItems,
 			user: currentUser._id,
 			totalAmount,
 			company: companyId,
+			clientKey,
 		})
 		await createdOrder.save()
 
@@ -298,6 +358,12 @@ export class OrdersService {
 			Array.isArray(updateOrderDto.items) &&
 			!this.itemsEqual(oldOrder.items as any, updateOrderDto.items as any)
 
+		if (itemsChanged && oldOrder.isPaid && updateOrderDto.isCompleted === true) {
+			throw new BadRequestException(
+				'Нельзя завершить заказ тем же запросом, что меняет его позиции: новую сумму сначала подтверждает казначей'
+			)
+		}
+
 		if (itemsChanged) {
 			const ownerStage5 = isOwner && !oldOrder.isPaid
 			const ownerStage6 = isOwner && oldOrder.isPaid && !oldOrder.confirmedPaid
@@ -314,8 +380,14 @@ export class OrdersService {
 			}
 		}
 
-		const patch: any = { ...updateOrderDto }
-		delete patch.editReason
+		// В запись идут только позиции, комментарий и поставленные флаги. Запросом флаги не снимаются: экран с устаревшим
+		// заказом шлёт прежние false, а null прошёл бы мимо проверок выше — подтверждение оплаты снимает только правка
+		// позиций (ниже). Владелец и дата заказа через правку не меняются.
+		const patch: any = {}
+		if (typeof updateOrderDto.comment === 'string') patch.comment = updateOrderDto.comment
+		for (const flag of ['isPaid', 'confirmedPaid', 'isCompleted'] as const) {
+			if (updateOrderDto[flag] === true) patch[flag] = true
+		}
 
 		let newTotalAmount = oldOrder.totalAmount || 0
 		let productById = new Map<string, any>()
@@ -337,21 +409,25 @@ export class OrdersService {
 				)
 			}
 
-			newTotalAmount = 0
-			for (const item of updateOrderDto.items) {
-				const product = productById.get(String(item.product))
-				if (product)
-					newTotalAmount += (item.quantity || 0) * (product.price || 0)
+			// После отметки оплаты сумму меняет только правка позиций: экран пересылает прежние позиции с каждым
+			// действием, и новая цена товара не должна молча переписать сумму оплаченного заказа
+			const recalc = itemsChanged || !oldOrder.isPaid || !oldOrder.totalAmount
+			// Цены строк записываются вместе с суммой. У оплаченного заказа они зафиксированы: товар, который в нём уже был,
+			// остаётся по своей цене и при правке позиций, по текущей идут только добавленные. У неоплаченного всё по текущим.
+			patch.items = priceLines(
+				updateOrderDto.items.map((item) => ({ product: item.product, quantity: item.quantity })),
+				oldOrder.isPaid ? keptPrices(oldOrder.items) : new Map(),
+				(id) => (recalc ? productById.get(id)?.price || 0 : undefined)
+			)
+			if (recalc) {
+				newTotalAmount = linesSum(patch.items)
+				patch.totalAmount = newTotalAmount
 			}
-			patch.totalAmount = newTotalAmount
 		}
 
 		const eventsToAppend: any[] = []
 		if (itemsChanged && oldOrder.isPaid) {
-			const alreadyCommitted =
-				oldOrder.paidAmount && oldOrder.paidAmount > 0
-					? oldOrder.paidAmount
-					: oldOrder.totalAmount || 0
+			const alreadyCommitted = committedAmount(oldOrder)
 			const diff = newTotalAmount - alreadyCommitted
 			patch.confirmedPaid = false
 			eventsToAppend.push({
@@ -396,9 +472,11 @@ export class OrdersService {
 			})
 		}
 
+		// Правка позиций оплаченного заказа тем же запросом подтверждение не ставит: новую сумму подтверждают отдельно
 		if (
 			updateOrderDto.confirmedPaid === true &&
-			!oldOrder.confirmedPaid
+			!oldOrder.confirmedPaid &&
+			!(itemsChanged && oldOrder.isPaid)
 		) {
 			eventsToAppend.push({
 				type: 'payment-confirmed',
@@ -502,8 +580,9 @@ export class OrdersService {
 		dto: UpdateOrderDto,
 		currentUser: UserModel
 	): Promise<Order> {
-		const newItems = (dto.items || []).map((i) => ({
-			product: String(i.product),
+		// id приводится к нижнему регистру: так он записан в строках заказа и так ищется его прежняя цена
+		let newItems: { product: string; quantity: number; price?: number }[] = (dto.items || []).map((i) => ({
+			product: String(i.product).toLowerCase(),
 			quantity: Number(i.quantity) || 0,
 		}))
 		if (!newItems.length) {
@@ -515,6 +594,10 @@ export class OrdersService {
 			? await this.productModel.find({ _id: { $in: productIds } }).exec()
 			: []
 		const productById = new Map(products.map((p) => [String(p._id), p]))
+		// Проверка — до пересчёта склада ниже: товара нет ни в заказе, ни в каталоге — посчитать его нечем
+		const kept = keptPrices(oldOrder.items)
+		const unknown = newItems.find((it) => !kept.has(it.product) && !productById.has(it.product))
+		if (unknown) throw new BadRequestException(`Товар ${unknown.product} не найден`)
 
 		const oldByProduct = new Map<string, number>()
 		for (const it of oldOrder.items || []) {
@@ -541,17 +624,14 @@ export class OrdersService {
 				.exec()
 		}
 
-		let newTotalAmount = 0
-		for (const it of newItems) {
-			const p = productById.get(it.product)
-			if (p) newTotalAmount += it.quantity * (p.price || 0)
-		}
+		// Товар, который уже был в заказе, остаётся по своей цене: правка завершённого заказа не переоценивает его
+		// по сегодняшним ценам. По текущей идут только добавленные товары (и строки старых заказов без записанной цены).
+		newItems = priceLines(newItems, kept, (id) => productById.get(id)?.price || 0)
+		const newTotalAmount = linesSum(newItems)
 
-		const base =
-			oldOrder.paidAmount && oldOrder.paidAmount > 0
-				? oldOrder.paidAmount
-				: oldOrder.totalAmount || 0
-		const diff = newTotalAmount - base
+		// У завершённого заказа нет шага подтверждения: каждая запись о доплате или возврате исполняется сама по себе,
+		// поэтому разница — от прежней суммы заказа, и записи нескольких правок складываются верно
+		const diff = newTotalAmount - (oldOrder.totalAmount || 0)
 		const reason = dto.editReason?.trim() || ''
 		const eventsToAppend: any[] = [
 			{
@@ -751,6 +831,8 @@ export class OrdersService {
 		}
 
 		const removedOrder = await this.orderModel.findByIdAndDelete(id).exec()
+		// второй одновременный запрос удаления: товар на склад уже вернул первый
+		if (!removedOrder) throw new NotFoundException('Заказ не найден')
 
 		let returnedSummary = ''
 		if (wasCompleted) {
@@ -767,12 +849,7 @@ export class OrdersService {
 			returnedSummary = restored.join(', ')
 		}
 
-		const refundAmount =
-			removedOrder.paidAmount && removedOrder.paidAmount > 0
-				? removedOrder.paidAmount
-				: removedOrder.isPaid
-					? removedOrder.totalAmount || 0
-					: 0
+		const refundAmount = refundOnRemove(removedOrder)
 
 		await this.changeHistoryService.createChangeHistory({
 			user: currentUser._id,

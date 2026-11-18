@@ -35,6 +35,12 @@ export class Product {
 	@prop()
 	category: string
 
+	@prop()
+	coverColor?: string
+
+	@prop()
+	photo?: string
+
 	@prop({ default: () => Date.now() })
 	createdAt?: number
 

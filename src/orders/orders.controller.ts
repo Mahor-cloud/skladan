@@ -31,9 +31,10 @@ export class OrdersController {
 	@Auth('user', ['create_orders'])
 	create(
 		@Body() createOrderDto: CreateOrderDto[],
-		@CurrentUser() currentUser: UserModel
+		@CurrentUser() currentUser: UserModel,
+		@Query('key') key?: string
 	) {
-		return this.ordersService.createOrder(createOrderDto, currentUser)
+		return this.ordersService.createOrder(createOrderDto, currentUser, key)
 	}
 
 	@Get()

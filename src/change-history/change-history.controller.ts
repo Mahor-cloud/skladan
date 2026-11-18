@@ -23,7 +23,6 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator'
 import { UserModel } from 'src/auth/user.model'
 import { IdValidationPipe } from 'src/pipes/id.validation.pipe'
 import { ChangeHistoryService } from './change-history.service'
-import { CreateChangeHistoryDto } from './dto/create-change-history.dto'
 import { RealtimeService } from './realtime.service'
 import { SubscriptionDto, SubscriptionPreferencesDto } from './dto/subscription.dto'
 
@@ -43,6 +42,7 @@ export class ChangeHistoryController {
 		} catch {
 			throw new UnauthorizedException('Невалидный токен SSE')
 		}
+		if (payload?.typ === 'refresh' || payload?.exp - payload?.iat > 3600) throw new UnauthorizedException('Невалидный токен SSE')
 		const company = payload?.company
 		if (!company) {
 
@@ -85,11 +85,8 @@ export class ChangeHistoryController {
 		return this.changeHistoryService.updateMyPreferences(currentUser, preferences)
 	}
 
-	@Auth('admin', ['create_change_history'])
-	@Post()
-	create(@Body() createChangeHistoryDto: CreateChangeHistoryDto) {
-		return this.changeHistoryService.createChangeHistory(createChangeHistoryDto)
-	}
+	// Записи истории создаёт только сам сервер: открытый адрес позволял служащему записать событие от чужого имени
+	// задним числом и разослать его всем (а событием «местность удалена» — выбросить всех из приложения).
 
 	@Auth('user', ['view_change_history'])
 	@Get()

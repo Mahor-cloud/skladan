@@ -8,6 +8,7 @@ import { ModelType, Ref } from '@typegoose/typegoose/lib/types'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
+import { keptPrices, priceLines } from 'src/common/line-prices'
 import { Message } from 'src/database/messages.model'
 import { Order } from 'src/orders/order.model'
 import { Product } from 'src/products/product.model'
@@ -102,7 +103,16 @@ export class InventoryService {
 				path: 'items.product',
 				model: 'Product',
 			})
+			.populate({
+				path: 'createdBy',
+				select: '_id name isAdmin',
+			})
 			.exec()
+	}
+
+	// То же условие «открыта», что в inventory-lock.ts: isCompleted: false; позиции не грузим — это лёгкий адрес для полосы
+	findActive(): Promise<Inventory | null> {
+		return this.inventoryModel.findOne({ isCompleted: false }).select('-items').exec()
 	}
 
 	async findOne(id: string): Promise<any> {
@@ -159,21 +169,34 @@ export class InventoryService {
 		const sanitizedDto: any = { ...updateInventoryDto }
 		delete sanitizedDto.createdBy
 		delete sanitizedDto.startDate
-		// A completed inventory can't be reopened: completing it again would $set over everything since.
-		if (wasCompleted) delete sanitizedDto.isCompleted
+		// Цена строки записывается при завершении (ниже): оценка завершённой инвентаризации не должна меняться со сменой
+		// цены товара. Открытая цен не хранит и оценивается по текущим. При правке завершённой цены строк сохраняются;
+		// у старой завершённой без цен строки остаются без них.
+		if (updateInventoryDto.items) {
+			const lines = updateInventoryDto.items.map((i) => ({ product: i.product, newQuantity: i.newQuantity, quantity: i.quantity }))
+			const kept = wasCompleted ? keptPrices(oldInventory.items) : new Map<string, number>()
+			const now = kept.size ? await this.currentPrices(lines) : new Map<string, number>()
+			sanitizedDto.items = priceLines(lines, kept, (pid) => (kept.size ? (now.get(pid) ?? 0) : undefined))
+		}
 		// Completing: write the count to stock while the inventory is still open (stock stays frozen),
 		// and only then close it — otherwise an issue in between is overwritten by the $set.
 		const completing = !wasCompleted && sanitizedDto.isCompleted === true
-		if (completing) delete sanitizedDto.isCompleted
+		// Признак завершения из запроса в запись не идёт: завершённую заново не открыть, а пустое значение
+		// спрятало бы открытую инвентаризацию от заморозки склада. Его ставит только завершение ниже.
+		delete sanitizedDto.isCompleted
 
 		let updatedInventory = await this.inventoryModel
 			.findByIdAndUpdate(id, sanitizedDto, { new: true })
 			.exec()
 
 		if (completing) {
+			// Цены читаются до записи остатков: между ней и закрытием не должно быть шага, который может упасть.
+			// Пока инвентаризация открыта, товары править нельзя, так что цены те же.
+			const lines = (updatedInventory.items || []).map((i: any) => ({ product: i.product, newQuantity: i.newQuantity, quantity: i.quantity }))
+			const now = await this.currentPrices(lines)
 			await this.applyCompletion(updatedInventory.items as any)
 			updatedInventory = await this.inventoryModel
-				.findByIdAndUpdate(id, { isCompleted: true }, { new: true })
+				.findByIdAndUpdate(id, { isCompleted: true, items: priceLines(lines, new Map(), (pid) => now.get(pid) ?? 0) }, { new: true })
 				.exec()
 		} else if (wasCompleted && updateInventoryDto.items) {
 			await this.applyDeltas(updatedInventory.items as any, oldItemsMap)
@@ -226,6 +249,15 @@ export class InventoryService {
 				'Нельзя изменить/удалить инвентаризацию: есть более поздняя инвентаризация.'
 			)
 		}
+	}
+
+	/** Текущие цены товаров строк: { товар → цена }. */
+	private async currentPrices(lines: { product: any }[]): Promise<Map<string, number>> {
+		const products = await this.productModel
+			.find({ _id: { $in: lines.map((l) => l.product) } })
+			.select('price')
+			.exec()
+		return new Map(products.map((p) => [String(p._id), p.price || 0]))
 	}
 
 	private async applyCompletion(
@@ -282,9 +314,10 @@ export class InventoryService {
 		if (!oldInventory.isCompleted && newInventory.isCompleted) {
 			changes.push('Инвентаризация завершена')
 		}
-		if (
-			JSON.stringify(oldInventory.items) !== JSON.stringify(newInventory.items)
-		) {
+		// Сравниваются количества: цена, записанная в строки при завершении, — не изменение количества
+		const counts = (inventory: Inventory) =>
+			JSON.stringify((inventory.items || []).map((i) => [String(i.product), i.newQuantity, i.quantity]))
+		if (counts(oldInventory) !== counts(newInventory)) {
 			changes.push(`Количество товаров изменено`)
 		}
 		if (oldInventory.comment !== newInventory.comment) {

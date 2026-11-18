@@ -12,11 +12,14 @@ import {
 	Param,
 	Post,
 	Put,
+	Req,
 	UsePipes,
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { IdValidationPipe } from 'src/pipes/id.validation.pipe'
 import { AuthService } from './auth.service'
+import type { Request } from 'express'
+import { clientIp } from '../common/throttler/ip-throttler.guard'
 import { Auth } from './decorators/auth.decorator'
 import { CurrentUser } from './decorators/current-user.decorator'
 import { authDto } from './dto/auth.dto'
@@ -31,10 +34,10 @@ export class AuthController {
 	constructor(private readonly authService: AuthService) {}
 
 	@HttpCode(200)
-	@Throttle({ default: { limit: 300, ttl: 60_000 } })
+	@Throttle({ default: { limit: 30, ttl: 60_000 } })
 	@Post('login')
-	async login(@Body() body: authDto) {
-		return this.authService.login(body)
+	async login(@Body() body: authDto, @Req() req: Request) {
+		return this.authService.login(body, clientIp(req))
 	}
 
 	@HttpCode(200)
@@ -43,6 +46,13 @@ export class AuthController {
 	@Post('login/access-token')
 	async getNewTokens(@Body() dto: RefreshTokenDto) {
 		return this.authService.getNewTokens(dto)
+	}
+
+	// Без проверки ключа доступа: выходят по ключу обновления (см. AuthService.logout)
+	@HttpCode(200)
+	@Post('logout')
+	async logout(@Body() dto: RefreshTokenDto) {
+		return this.authService.logout(dto)
 	}
 
 	@HttpCode(200)
@@ -66,7 +76,7 @@ export class AuthController {
 	@Auth('user', [])
 	@Get('me')
 	async me(@CurrentUser() currentUser: UserModel) {
-		return this.authService.findOne(String(currentUser._id))
+		return this.authService.me(String(currentUser._id))
 	}
 
 	@HttpCode(200)

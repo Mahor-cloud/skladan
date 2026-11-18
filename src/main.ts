@@ -44,6 +44,16 @@ async function bootstrap() {
 		allowList = envOrigins.length ? envOrigins : defaultDevOrigins
 	}
 
+	// Сервер не называет свой каркас в заголовках ответа
+	app.getHttpAdapter().getInstance().disable('x-powered-by')
+	// Запрос с чужого сайта отклоняется явным отказом, а не ошибкой сервера: иначе любой сканер увеличивал бы счёт ошибок 5xx
+	app.use((req: any, res: any, next: () => void) => {
+		const origin = req.headers?.origin
+		if (origin && !allowList.includes(origin)) {
+			return res.status(403).json({ statusCode: 403, message: 'Запросы с этого сайта не принимаются' })
+		}
+		next()
+	})
 	app.use(
 		cors({
 			origin: (origin, callback) => {

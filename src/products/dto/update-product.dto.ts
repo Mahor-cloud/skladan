@@ -3,7 +3,8 @@
  * Licensed under Apache 2.0
  */
 
-import { IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator'
+import { Transform } from 'class-transformer'
+import { IsInt, IsNumber, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator'
 
 export class UpdateProductDto {
 	@IsOptional()
@@ -30,4 +31,11 @@ export class UpdateProductDto {
 	@IsInt()
 	@Min(0)
 	targetQty?: number
+
+	// '' сводится к null: оба значения сбрасывают цвет
+	@IsOptional()
+	@Transform(({ value }) => (value === '' ? null : value))
+	@IsString()
+	@Matches(/^#[0-9a-fA-F]{6}$/)
+	coverColor?: string | null
 }

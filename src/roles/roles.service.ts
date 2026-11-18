@@ -24,7 +24,8 @@ export class RolesService {
 		createRoleDto: CreateRoleDto,
 		currentUser: UserModel
 	): Promise<Role> {
-		const createdRole = new this.roleModel(createRoleDto)
+		// company явно, как в createProduct: required проверяется раньше, чем tenantPlugin подставит его в pre('save')
+		const createdRole = new this.roleModel({ ...createRoleDto, company: currentUser.company })
 		await createdRole.save()
 		await this.changeHistoryService.createChangeHistory({
 			user: currentUser._id,
@@ -49,6 +50,11 @@ export class RolesService {
 		currentUser: UserModel
 	): Promise<Role> {
 		const oldRole = await this.roleModel.findById(id).exec()
+		// Системной роли «Admin» нельзя сменить название и права, нижнее меню — можно
+		if (oldRole?.isSystem) {
+			delete updateRoleDto.name
+			delete updateRoleDto.permissions
+		}
 		const updatedRole = await this.roleModel
 			.findByIdAndUpdate(id, updateRoleDto, { new: true })
 			.exec()
@@ -63,7 +69,7 @@ export class RolesService {
 	}
 
 	async remove(id: string, currentUser: UserModel): Promise<Role> {
-		const usersWithRole = await this.userModel.find({ role: id }).exec()
+		const usersWithRole = await this.userModel.find({ role: id, deletedAt: null }).exec()
 		if (usersWithRole.length > 0) {
 			throw new BadRequestException(
 				'Нельзя удалить роль, так как она используется.'
@@ -90,6 +96,9 @@ export class RolesService {
 			JSON.stringify(newRole.permissions)
 		) {
 			changes.push(`Права изменены на ${newRole.permissions.join(', ')}`)
+		}
+		if (JSON.stringify(oldRole.mobileTabs || []) !== JSON.stringify(newRole.mobileTabs || [])) {
+			changes.push(`Нижнее меню изменено на ${newRole.mobileTabs?.join(', ') || 'авто'}`)
 		}
 		return changes.join(', ')
 	}

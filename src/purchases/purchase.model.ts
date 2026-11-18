@@ -45,6 +45,8 @@ export class Purchase {
 		product: Ref<Product>
 		quantity: number
 		confirmedQuantity: number
+		// цена штуки, по которой посчитаны суммы закупки (см. common/line-prices); у старых закупок её может не быть
+		price?: number
 	}[]
 
 	@prop({ default: () => Date.now() })

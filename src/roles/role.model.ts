@@ -52,6 +52,18 @@ export const ALL_PERMISSIONS = [
 
 export type Permission = typeof ALL_PERMISSIONS[number]
 
+export const MOBILE_TABS = [
+	'storage',
+	'orders',
+	'cabinet',
+	'purchases',
+	'inventory',
+	'cabinet-summary',
+	'statistics',
+	'history',
+	'admin',
+]
+
 export interface Role extends Base {}
 @plugin(tenantPlugin)
 @modelOptions({
@@ -74,4 +86,8 @@ export class Role {
 		enum: ALL_PERMISSIONS as unknown as string[],
 	})
 	permissions: string[]
+
+	// Нет поля или пустой массив — меню телефона собирается автоматически
+	@prop({ type: () => [String], default: undefined })
+	mobileTabs?: string[]
 }

@@ -9,6 +9,7 @@ import { Types } from 'mongoose'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from '../auth/user.model'
 import { ChangeHistory } from '../change-history/change-history.model'
+import { LINE_PRICE } from '../common/line-prices'
 import { getTenantContext } from '../common/tenant-context/tenant-context.storage'
 import { Inventory } from '../inventory/inventory.model'
 import { Order } from '../orders/order.model'
@@ -133,7 +134,7 @@ export class StatisticsService {
 				{
 					$group: {
 						_id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$orderDate' } } },
-						amount: { $sum: { $multiply: ['$items.quantity', { $ifNull: ['$product.price', 0] }] } },
+						amount: { $sum: { $multiply: ['$items.quantity', LINE_PRICE] } },
 						orderIds: { $addToSet: '$_id' },
 						completedCount: { $sum: { $cond: ['$isCompleted', 1, 0] } },
 					},
@@ -197,7 +198,7 @@ export class StatisticsService {
 				{
 					$group: {
 						_id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$purchaseDate' } } },
-						amount: { $sum: { $multiply: ['$items.confirmedQuantity', { $ifNull: ['$product.price', 0] }] } },
+						amount: { $sum: { $multiply: ['$items.confirmedQuantity', LINE_PRICE] } },
 						purchaseIds: { $addToSet: '$_id' },
 						completedCount: { $sum: { $cond: ['$isCompleted', 1, 0] } },
 					},
@@ -275,7 +276,7 @@ export class StatisticsService {
 					name: { $first: '$product.name' },
 					category: { $first: '$product.category' },
 					quantity: { $sum: '$items.quantity' },
-					amount: { $sum: { $multiply: ['$items.quantity', { $ifNull: ['$product.price', 0] }] } },
+					amount: { $sum: { $multiply: ['$items.quantity', LINE_PRICE] } },
 				},
 			},
 			{
@@ -361,7 +362,7 @@ export class StatisticsService {
 				{
 					$group: {
 						_id: '$userOid',
-						amount: { $sum: { $multiply: ['$items.quantity', { $ifNull: ['$product.price', 0] }] } },
+						amount: { $sum: { $multiply: ['$items.quantity', LINE_PRICE] } },
 						orderIds: { $addToSet: '$_id' },
 						completedOrderIds: { $addToSet: { $cond: ['$isCompleted', '$_id', '$$REMOVE'] } },
 					},
@@ -463,7 +464,7 @@ export class StatisticsService {
 			{
 				$group: {
 					_id: { $ifNull: ['$product.category', 'Без категории'] },
-					amount: { $sum: { $multiply: ['$items.quantity', { $ifNull: ['$product.price', 0] }] } },
+					amount: { $sum: { $multiply: ['$items.quantity', LINE_PRICE] } },
 				},
 			},
 			{ $sort: { amount: -1 } },
@@ -536,7 +537,8 @@ export class StatisticsService {
 			.sort({ changeDate: -1 })
 			.skip(skip)
 			.limit(limit)
-			.populate('user')
+			// только имя: без списка полей в ответ уходил весь пользователь, с хэшем пароля и ключом сессии
+			.populate({ path: 'user', select: '_id name isAdmin' })
 			.exec()
 		return { total, page, limit, items }
 	}
@@ -544,7 +546,11 @@ export class StatisticsService {
 	async exportCsv(query: DashboardQueryDto): Promise<string> {
 		const data = await this.getDashboard(query)
 		const lines: string[] = []
-		const esc = (s: any) => `"${String(s ?? '').replace(/"/g, '""')}"`
+		// Текст, начинающийся с =, +, - или @, таблица приняла бы за формулу — перед ним ставится апостроф (числа не трогаются)
+		const esc = (s: any) => {
+			const v = String(s ?? '')
+			return `"${(typeof s === 'string' && /^[=+\-@\t\r]/.test(v) && isNaN(Number(v)) ? "'" + v : v).replace(/"/g, '""')}"`
+		}
 
 		lines.push('# Skladan Statistics Export')
 		lines.push(`# Period: ${new Date(data.meta.from).toISOString()} - ${new Date(data.meta.to).toISOString()}`)

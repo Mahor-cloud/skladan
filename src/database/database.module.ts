@@ -14,6 +14,7 @@ import { Counter } from 'src/common/counters/counter.model'
 import { Company } from 'src/company/company.model'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Order } from 'src/orders/order.model'
+import { ProductPhoto } from 'src/products/product-photo.model'
 import { Product } from 'src/products/product.model'
 import { Purchase } from 'src/purchases/purchase.model'
 import { Role } from 'src/roles/role.model'
@@ -41,6 +42,7 @@ import { Message } from './messages.model'
 			},
 			{ typegooseClass: Company, schemaOptions: { collection: 'Company' } },
 			{ typegooseClass: Counter, schemaOptions: { collection: 'Counter' } },
+			{ typegooseClass: ProductPhoto, schemaOptions: { collection: 'ProductPhotos' } },
 		]),
 		forwardRef(() => AuthModule),
 		forwardRef(() => ChangeHistoryModule),

@@ -18,6 +18,9 @@ interface JwtPayload {
 	isSuperAdmin?: boolean
 	login?: string
 	tokenVersion?: number
+	typ?: string
+	iat?: number
+	exp?: number
 }
 
 @Injectable()
@@ -35,6 +38,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 	}
 
 	async validate(payload: JwtPayload) {
+		// Ключ обновления (30 дней) как ключ доступа не принимается — он годится только для получения новой пары.
+		// По сроку жизни узнаются и ключи обновления без пометки: выданные до её появления и при входе «под председателем».
+		if (payload.typ === 'refresh' || (payload.exp && payload.iat && payload.exp - payload.iat > 3600)) {
+			throw new UnauthorizedException('Неверный ключ доступа')
+		}
 		const user = await this.UserModel.findById(payload._id)
 			.setOptions({ skipTenantScope: true } as any)
 			.populate('role')
@@ -42,10 +50,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 		if (!user) throw new UnauthorizedException('Пользователь не найден')
 		if (user.deletedAt) throw new UnauthorizedException('Пользователь деактивирован')
 
+		// Номер сессии сверяется у всех: у супер-админа вход его не меняет (устройств может быть несколько),
+		// но выход и смена пароля — меняют
+		if ((payload.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+			throw new UnauthorizedException('SESSION_SUPERSEDED')
+		}
 		if (!user.isSuperAdmin) {
-			if ((payload.tokenVersion || 0) !== (user.tokenVersion || 0)) {
-				throw new UnauthorizedException('SESSION_SUPERSEDED')
-			}
 			if (user.company) {
 				const company = await this.companyModel
 					.findById(user.company)

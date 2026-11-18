@@ -14,6 +14,7 @@ import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
 import { CounterService } from 'src/common/counters/counter.service'
+import { keptPrices, linesSum, priceLines } from 'src/common/line-prices'
 import { Message } from 'src/database/messages.model'
 import { assertStockNotFrozen, openDocsAllowed } from 'src/inventory/inventory-lock'
 import { Inventory } from 'src/inventory/inventory.model'
@@ -146,6 +147,16 @@ export class PurchasesService {
 		if (oldPurchase.isCompleted) {
 			throw new BadRequestException('Закупка уже завершена')
 		}
+		// Создание и оплата запросом не снимаются: экран с устаревшей закупкой прислал бы прежние false,
+		// а оплата — ещё и признак того, что цены строк зафиксированы
+		if (
+			(oldPurchase.isPaid && updatePurchaseDto.isPaid === false) ||
+			(oldPurchase.isCreated && updatePurchaseDto.isCreated === false) ||
+			// «частично принята» снимается только завершением: иначе принятое можно было бы зачислить на склад второй раз
+			(oldPurchase.partialCompleted && updatePurchaseDto.partialCompleted === false && updatePurchaseDto.isCompleted !== true)
+		) {
+			throw new BadRequestException('Закупка уже изменилась — обновите страницу')
+		}
 
 		const userRole = currentUser.role
 			? await this.roleModel.findById(currentUser.role).exec()
@@ -188,6 +199,15 @@ export class PurchasesService {
 		}
 
 		if (Array.isArray(updatePurchaseDto.items)) {
+			// Строка с уже принятым товаром из закупки не убирается: вернув её потом, принятое зачислили бы на склад второй раз
+			// id товара — строчными, как в базе: иначе повтор и убранная строка проходили бы сменой регистра букв
+			for (const item of updatePurchaseDto.items) item.product = String(item.product).toLowerCase()
+			const sent = new Set(updatePurchaseDto.items.map((i) => String(i.product)))
+			// Товар в закупке — одной строкой: при повторе принятое считалось бы от последней строки и зачислялось дважды
+			if (sent.size !== updatePurchaseDto.items.length) throw new BadRequestException('Товар в закупке указан дважды')
+			if ((oldPurchase.items || []).some((i: any) => (i.confirmedQuantity || 0) > 0 && !sent.has(String(i.product)))) {
+				throw new BadRequestException('Закупка уже изменилась — обновите страницу')
+			}
 			const itemsChanged = !this.purchaseItemsEqual(
 				oldPurchase.items as any[],
 				updatePurchaseDto.items as any[]
@@ -203,7 +223,14 @@ export class PurchasesService {
 			}
 		}
 
-		const patch: any = { ...updatePurchaseDto }
+		// В запись идут только комментарий, позиции (ниже) и флаги. «Создана», «оплачена», «завершена» запросом только
+		// ставятся — пустое значение или false их не снимает; «частично принята» — как прислано (см. проверку выше).
+		const patch: any = {}
+		if (typeof updatePurchaseDto.comment === 'string') patch.comment = updatePurchaseDto.comment
+		for (const flag of ['isCreated', 'isPaid', 'isCompleted'] as const) {
+			if (updatePurchaseDto[flag] === true) patch[flag] = true
+		}
+		if (typeof updatePurchaseDto.partialCompleted === 'boolean') patch.partialCompleted = updatePurchaseDto.partialCompleted
 		if (updatePurchaseDto.items) {
 			const productIds = updatePurchaseDto.items
 				.map((i) => i.product)
@@ -212,17 +239,15 @@ export class PurchasesService {
 				? await this.productModel.find({ _id: { $in: productIds } }).exec()
 				: []
 			const productById = new Map(products.map((p) => [String(p._id), p]))
-			let total = 0
-			let totalConfirmed = 0
-			for (const item of updatePurchaseDto.items) {
-				const product = productById.get(String(item.product))
-				if (product) {
-					total += (item.quantity || 0) * (product.price || 0)
-					totalConfirmed += (item.confirmedQuantity || 0) * (product.price || 0)
-				}
-			}
-			patch.totalAmount = total
-			patch.totalConfirmedAmount = totalConfirmed
+			// Цены строк записываются вместе с суммами. После оплаты они зафиксированы: товар, который уже был в закупке,
+			// остаётся по своей цене (приёмка её не меняет), по текущей идут только добавленные. До оплаты всё по текущим.
+			patch.items = priceLines(
+				updatePurchaseDto.items.map((item) => ({ product: item.product, quantity: item.quantity, confirmedQuantity: item.confirmedQuantity ?? 0 })),
+				oldPurchase.isPaid ? keptPrices(oldPurchase.items) : new Map(),
+				(id) => productById.get(id)?.price || 0
+			)
+			patch.totalAmount = linesSum(patch.items)
+			patch.totalConfirmedAmount = linesSum(patch.items, 'confirmedQuantity')
 
 			const isDraftSave =
 				!oldPurchase.isCreated && updatePurchaseDto.isCreated !== true
@@ -272,7 +297,7 @@ export class PurchasesService {
 		await this.changeHistoryService.createChangeHistory({
 			user: currentUser._id,
 			changeType: 'purchase-updated',
-			description: `Закупка ${updatedPurchase.purchaseNumber} обновлена. Изменения: ${changes}`,
+			description: `Закупка ${updatedPurchase.purchaseNumber} обновлена.${changes ? ` Изменения: ${changes}` : ''}`,
 			changeDate: Date.now(),
 		})
 		return updatedPurchase

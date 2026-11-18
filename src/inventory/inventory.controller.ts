@@ -11,8 +11,10 @@ import {
 	Param,
 	Post,
 	Put,
+	Res,
 	UsePipes,
 } from '@nestjs/common'
+import type { Response } from 'express'
 import { Auth } from 'src/auth/decorators/auth.decorator'
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator'
 import { UserModel } from 'src/auth/user.model'
@@ -42,6 +44,13 @@ export class InventoryController {
 	@Auth('user', ['view_inventory'])
 	findAll() {
 		return this.inventoryService.findAll()
+	}
+
+	// res.json: без него Nest отдал бы на null пустое тело, а клиенту нужен JSON null
+	@Get('active')
+	@Auth('user', ['view_inventory'])
+	async findActive(@Res() res: Response) {
+		res.json(await this.inventoryService.findActive())
 	}
 
 	@Get(':id')

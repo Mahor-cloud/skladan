@@ -13,14 +13,49 @@ import { Company } from 'src/company/company.model'
 import { Counter } from 'src/common/counters/counter.model'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Order } from 'src/orders/order.model'
+import { ProductPhoto } from 'src/products/product-photo.model'
+import { imageType, PHOTO_TOKEN } from 'src/products/products.service'
 import { Product } from 'src/products/product.model'
 import { Purchase } from 'src/purchases/purchase.model'
 import { Role } from 'src/roles/role.model'
 import { RealtimeService } from 'src/change-history/realtime.service'
 import { getTenantContext } from 'src/common/tenant-context/tenant-context.storage'
+import { PaymentMessageDto } from './messages.dto'
 import { Message } from './messages.model'
 
 const EXPORT_VERSION = 'v2.0.0'
+
+// Байты картинок в JSON — base64: Buffer.toJSON дал бы массив чисел вчетверо длиннее
+const photosToJson = (photos: ProductPhoto[]) =>
+	photos.map((p) => ({ company: p.company, token: p.token, contentType: p.contentType, data: p.data.toString('base64') }))
+// Из дампа — только ключ по шаблону и байты картинки, тип по байтам: иначе импорт выложил бы на домен приложения любой файл
+const photosFromJson = (photos: any[]) =>
+	photos.flatMap((p) => {
+		const data = Buffer.from(String(p.data), 'base64')
+		const contentType = imageType(data)
+		return typeof p.token === 'string' && PHOTO_TOKEN.test(p.token) && contentType ? [{ ...p, data, contentType }] : []
+	})
+// Ключ без принятой картинки сбрасывается: иначе у товара битая обложка
+const withKnownPhotos = (products: any[], photos: any[]) => {
+	const tokens = new Set(photos.map((p) => p.token))
+	return products.map((p) => (p.photo && !tokens.has(p.photo) ? { ...p, photo: null } : p))
+}
+
+const COMPANY_DUMP_KEYS = ['users', 'products', 'orders', 'purchases', 'inventories', 'roles', 'messages', 'subscriptions', 'changeHistories', 'productPhotos']
+
+// До любого удаления: иначе кривой дамп роняет импорт, когда данные уже стёрты
+function assertDumpShape(data: any, keys: string[]) {
+	for (const key of keys) {
+		const value = data[key]
+		if (value == null) continue
+		if (!Array.isArray(value) || value.some((r) => !r || typeof r !== 'object' || Array.isArray(r))) {
+			throw new BadRequestException(`Повреждённый дамп: «${key}» должно быть списком записей`)
+		}
+	}
+}
+
+// Список импорта: ключ дампа, модель, записи к вставке
+type ImportList = [string, any, any[]]
 
 @Injectable()
 export class DatabaseService {
@@ -36,6 +71,7 @@ export class DatabaseService {
 		@InjectModel(ChangeHistory) private readonly changeHistoryModel: ModelType<ChangeHistory>,
 		@InjectModel(Company) private readonly companyModel: ModelType<Company>,
 		@InjectModel(Counter) private readonly counterModel: ModelType<Counter>,
+		@InjectModel(ProductPhoto) private readonly photoModel: ModelType<ProductPhoto>,
 		private readonly realtime: RealtimeService
 	) {}
 
@@ -48,9 +84,11 @@ export class DatabaseService {
 		return await this.messageModel.findOne().exec()
 	}
 
-	async updatePaymentMessage(paymentMessage: string): Promise<Message> {
+	// Только присланные поля: старый клиент шлёт один paymentMessage и не должен затирать реквизиты
+	async updatePaymentMessage(dto: PaymentMessageDto): Promise<Message> {
+		const fields = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined))
 		const res = await this.messageModel
-			.findOneAndUpdate({}, { paymentMessage }, { new: true, upsert: true })
+			.findOneAndUpdate({}, { $set: fields }, { new: true, upsert: true })
 			.exec()
 		this.emitMsgChanged()
 		return res
@@ -99,76 +137,113 @@ export class DatabaseService {
 			messages: await this.messageModel.find().exec(),
 			subscriptions: await this.subscriptionModel.find().exec(),
 			changeHistories: await this.changeHistoryModel.find().exec(),
+			productPhotos: photosToJson(await this.photoModel.find().exec()),
 		}
 	}
 
-	async importCompanyData(currentCompany: string, data: any): Promise<void> {
+	async importCompanyData(currentCompany: string, data: any, importer?: UserModel): Promise<void> {
 		if (!data || data._meta?.type !== 'company') {
 			throw new BadRequestException('Ожидается per-company дамп (_meta.type === "company")')
 		}
+		assertDumpShape(data, COMPANY_DUMP_KEYS)
 
-		const allRecords = [
-			...(data.users || []),
-			...(data.products || []),
-			...(data.orders || []),
-			...(data.purchases || []),
-			...(data.inventories || []),
-			...(data.roles || []),
-			...(data.messages || []),
-			...(data.subscriptions || []),
-			...(data.changeHistories || []),
-		]
-		for (const r of allRecords) {
-			if (r.company && String(r.company) !== String(currentCompany)) {
-				throw new ForbiddenException('В дампе обнаружены записи другой компании')
+		for (const key of COMPANY_DUMP_KEYS) {
+			for (const r of data[key] || []) {
+				if (r.company && String(r.company) !== String(currentCompany)) {
+					throw new ForbiddenException('В дампе обнаружены записи другой компании')
+				}
 			}
 		}
 
+		// _id остаются: на них держатся связи (пользователь → роль, заказ → пользователь и товар, «Мой склад»)
 		const sanitize = (arr?: any[]) =>
-			(arr || []).map(({ _id, __v, company, ...rest }) => ({
+			(arr || []).map(({ __v, company, ...rest }) => ({
 				...rest,
 				company: currentCompany,
 			}))
 
-		const sanitizeUsers = (arr?: any[]) =>
-			sanitize(arr).map((u: any) => ({
+		const users = await this.withCurrentAccess(
+			sanitize(data.users).map((u: any) => ({
 				...u,
 				isSuperAdmin: false,
 				isAdmin: !!u.isAdmin,
 				refreshToken: null,
 			}))
+		)
+		const productPhotos = photosFromJson(sanitize(data.productPhotos))
+		// Роли и пользователи — первыми: если вставка дальше упадёт, в местность можно войти и повторить импорт
+		const lists: ImportList[] = [
+			['roles', this.roleModel, sanitize(data.roles)],
+			['users', this.userModel, users],
+			['products', this.productModel, withKnownPhotos(sanitize(data.products), productPhotos)],
+			['orders', this.orderModel, sanitize(data.orders)],
+			['purchases', this.purchaseModel, sanitize(data.purchases)],
+			['inventories', this.inventoryModel, sanitize(data.inventories)],
+			['messages', this.messageModel, sanitize(data.messages)],
+			['subscriptions', this.subscriptionModel, sanitize(data.subscriptions)],
+			['changeHistories', this.changeHistoryModel, sanitize(data.changeHistories)],
+			['productPhotos', this.photoModel, productPhotos],
+		]
+		await this.assertImportable(lists, users, importer, { company: { $ne: currentCompany } })
 
-		await Promise.all([
-			this.userModel.deleteMany({}),
-			this.productModel.deleteMany({}),
-			this.orderModel.deleteMany({}),
-			this.purchaseModel.deleteMany({}),
-			this.inventoryModel.deleteMany({}),
-			this.roleModel.deleteMany({}),
-			this.messageModel.deleteMany({}),
-			this.subscriptionModel.deleteMany({}),
-			this.changeHistoryModel.deleteMany({}),
-		])
+		await Promise.all(lists.map(([, model]) => model.deleteMany({})))
+		for (const [, model, records] of lists) {
+			if (records.length) await model.insertMany(records)
+		}
+	}
 
-		const users = sanitizeUsers(data.users)
-		const products = sanitize(data.products)
-		const orders = sanitize(data.orders)
-		const purchases = sanitize(data.purchases)
-		const inventories = sanitize(data.inventories)
-		const roles = sanitize(data.roles)
-		const messages = sanitize(data.messages)
-		const subscriptions = sanitize(data.subscriptions)
-		const changeHistories = sanitize(data.changeHistories)
+	// Пароли в дамп не попадают: пользователю, который сейчас есть в базе (по _id, иначе по логину в своей местности),
+	// остаются нынешние пароль и номер сессии. Читать до удаления; пароль из самого дампа не принимается.
+	private async withCurrentAccess(users: any[], options: any = {}): Promise<any[]> {
+		if (!users.length) return users
+		const current: any[] = await this.userModel
+			.find()
+			.select('_id login company password tokenVersion')
+			.setOptions(options)
+			.lean()
+			.exec()
+		const loginKey = (u: any) => `${u.company ?? null}:${u.login}`
+		const byId = new Map(current.map((u) => [String(u._id), u]))
+		const byLogin = new Map(current.map((u) => [loginKey(u), u]))
+		return users.map((u) => {
+			const now = byId.get(String(u._id)) ?? byLogin.get(loginKey(u))
+			return { ...u, password: now?.password, tokenVersion: now?.tokenVersion ?? u.tokenVersion }
+		})
+	}
 
-		if (users.length) await this.userModel.insertMany(users)
-		if (products.length) await this.productModel.insertMany(products)
-		if (orders.length) await this.orderModel.insertMany(orders)
-		if (purchases.length) await this.purchaseModel.insertMany(purchases)
-		if (inventories.length) await this.inventoryModel.insertMany(inventories)
-		if (roles.length) await this.roleModel.insertMany(roles)
-		if (messages.length) await this.messageModel.insertMany(messages)
-		if (subscriptions.length) await this.subscriptionModel.insertMany(subscriptions)
-		if (changeHistories.length) await this.changeHistoryModel.insertMany(changeHistories)
+	// До любого удаления: всё, на чём вставка упала бы уже после стирания (кривой, повторный или занятый вне области
+	// импорта _id, занятый логин), и импорт, после которого импортирующий сам не войдёт. outside — условие «не эта местность».
+	private async assertImportable(lists: ImportList[], users: any[], importer?: UserModel, outside?: Record<string, any>) {
+		const skip = { skipTenantScope: true } as any
+		for (const [key, model, records] of lists) {
+			const ids = records.filter((r) => r._id != null).map((r) => String(r._id).toLowerCase())
+			if (ids.some((id) => !/^[0-9a-f]{24}$/.test(id)) || new Set(ids).size !== ids.length) {
+				throw new BadRequestException(`Повреждённый дамп: в «${key}» неверный или повторяющийся _id`)
+			}
+			// та же проверка схемой, что сделает вставка (например, право роли из другой версии)
+			for (const r of records) {
+				await new model(r).validate().catch((e: Error) => {
+					throw new BadRequestException(`Повреждённый дамп: запись в «${key}» не проходит проверку — ${e.message}`)
+				})
+			}
+			if (outside && ids.length && (await model.countDocuments({ _id: { $in: ids }, ...outside }).setOptions(skip))) {
+				throw new ForbiddenException('В дампе обнаружены записи другой компании')
+			}
+		}
+		const logins = users.map((u) => u.login)
+		const roleNames = (lists.find(([key]) => key === 'roles')?.[2] || []).map((r) => `${r.company}:${r.name}`)
+		if (new Set(users.map((u) => `${u.company ?? null}:${u.login}`)).size !== users.length || new Set(roleNames).size !== roleNames.length) {
+			throw new BadRequestException('Повреждённый дамп: повторяется логин пользователя или название роли')
+		}
+		// вход ищет логин по всем местностям сразу — чужой логин из дампа перекрыл бы вход его владельцу
+		if (outside && logins.length && (await this.userModel.countDocuments({ login: { $in: logins }, ...outside }).setOptions(skip))) {
+			throw new BadRequestException('Повреждённый дамп: логин из дампа занят в другой местности')
+		}
+		// в полном импорте (outside не задан) импортирующий — супер-админ и должен им остаться
+		const stays = (u: any) => u.password && !u.deletedAt && (outside || u.isSuperAdmin === true) && (String(u._id) === String(importer._id) || u.login === importer.login)
+		if (importer && !users.some(stays)) {
+			throw new BadRequestException('Импорт отменён: в дампе нет вашей учётной записи — после него вы не смогли бы войти')
+		}
 	}
 
 	async exportFullData(): Promise<any> {
@@ -189,48 +264,44 @@ export class DatabaseService {
 			messages: await this.messageModel.find().setOptions({ skipTenantScope: true } as any).exec(),
 			subscriptions: await this.subscriptionModel.find().setOptions({ skipTenantScope: true } as any).exec(),
 			changeHistories: await this.changeHistoryModel.find().setOptions({ skipTenantScope: true } as any).exec(),
+			productPhotos: photosToJson(await this.photoModel.find().setOptions({ skipTenantScope: true } as any).exec()),
 		}
 	}
 
-	async importFullData(data: any, confirm: string): Promise<void> {
+	async importFullData(data: any, confirm: string, importer?: UserModel): Promise<void> {
 		if (!data || data._meta?.type !== 'full') {
 			throw new BadRequestException('Ожидается полный дамп (_meta.type === "full")')
 		}
 		if (confirm !== 'i-know-what-i-am-doing') {
 			throw new BadRequestException('Для импорта требуется явное подтверждение confirm="i-know-what-i-am-doing"')
 		}
+		assertDumpShape(data, ['companies', 'counters', ...COMPANY_DUMP_KEYS])
 
 		const skip = { skipTenantScope: true } as any
-		await Promise.all([
-			this.companyModel.deleteMany({}).setOptions(skip),
-			this.counterModel.deleteMany({}).setOptions(skip),
-			this.userModel.deleteMany({}).setOptions(skip),
-			this.productModel.deleteMany({}).setOptions(skip),
-			this.orderModel.deleteMany({}).setOptions(skip),
-			this.purchaseModel.deleteMany({}).setOptions(skip),
-			this.inventoryModel.deleteMany({}).setOptions(skip),
-			this.roleModel.deleteMany({}).setOptions(skip),
-			this.messageModel.deleteMany({}).setOptions(skip),
-			this.subscriptionModel.deleteMany({}).setOptions(skip),
-			this.changeHistoryModel.deleteMany({}).setOptions(skip),
-		])
+		const users = await this.withCurrentAccess(
+			(data.users || []).map((u: any) => ({ ...u, refreshToken: null })),
+			skip
+		)
+		const productPhotos = photosFromJson(data.productPhotos || [])
+		const lists: ImportList[] = [
+			['companies', this.companyModel, data.companies || []],
+			['counters', this.counterModel, data.counters || []],
+			['roles', this.roleModel, data.roles || []],
+			['users', this.userModel, users],
+			['products', this.productModel, withKnownPhotos(data.products || [], productPhotos)],
+			['orders', this.orderModel, data.orders || []],
+			['purchases', this.purchaseModel, data.purchases || []],
+			['inventories', this.inventoryModel, data.inventories || []],
+			['messages', this.messageModel, data.messages || []],
+			['subscriptions', this.subscriptionModel, data.subscriptions || []],
+			['changeHistories', this.changeHistoryModel, data.changeHistories || []],
+			['productPhotos', this.photoModel, productPhotos],
+		]
+		await this.assertImportable(lists, users, importer)
 
-		if (data.companies?.length) await this.companyModel.insertMany(data.companies)
-		if (data.counters?.length) await this.counterModel.insertMany(data.counters)
-		if (data.users?.length) {
-			const sanitizedUsers = (data.users as any[]).map((u) => ({
-				...u,
-				refreshToken: null,
-			}))
-			await this.userModel.insertMany(sanitizedUsers)
+		await Promise.all(lists.map(([, model]) => model.deleteMany({}).setOptions(skip)))
+		for (const [, model, records] of lists) {
+			if (records.length) await model.insertMany(records)
 		}
-		if (data.products?.length) await this.productModel.insertMany(data.products)
-		if (data.orders?.length) await this.orderModel.insertMany(data.orders)
-		if (data.purchases?.length) await this.purchaseModel.insertMany(data.purchases)
-		if (data.inventories?.length) await this.inventoryModel.insertMany(data.inventories)
-		if (data.roles?.length) await this.roleModel.insertMany(data.roles)
-		if (data.messages?.length) await this.messageModel.insertMany(data.messages)
-		if (data.subscriptions?.length) await this.subscriptionModel.insertMany(data.subscriptions)
-		if (data.changeHistories?.length) await this.changeHistoryModel.insertMany(data.changeHistories)
 	}
 }

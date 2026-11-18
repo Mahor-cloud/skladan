@@ -3,16 +3,52 @@
  * Licensed under Apache 2.0
  */
 
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common'
 import { ModelType } from '@typegoose/typegoose/lib/types'
+import { randomBytes } from 'crypto'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from 'src/auth/user.model'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
+import { RealtimeService } from 'src/change-history/realtime.service'
+import { getTenantContext } from 'src/common/tenant-context/tenant-context.storage'
+import { KindCover, Message } from 'src/database/messages.model'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Order } from 'src/orders/order.model'
 import { CreateProductDto } from './dto/create-product.dto'
+import { KindCoverDto, RenameKindDto } from './dto/kinds.dto'
 import { UpdateProductDto } from './dto/update-product.dto'
+import { ProductPhoto } from './product-photo.model'
 import { Product } from './product.model'
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+export const PHOTO_TOKEN = /^[0-9a-f]{32}$/
+export const PHOTO_QUOTA = 30 * 1024 * 1024
+const MAX_KIND_COVERS = 500
+
+// Тип определяется по первым байтам: заявленному клиентом mimetype верить нельзя
+export function imageType(buf?: Buffer): string | null {
+	if (!buf || buf.length < 12) return null
+	if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg'
+	if (buf.subarray(0, 8).equals(PNG_SIGNATURE)) return 'image/png'
+	if (buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'image/webp'
+	return null
+}
+
+export function withKindCover(list: KindCover[], category: string, cover: string | null): KindCover[] {
+	const rest = list.filter((k) => k.category !== category)
+	return cover ? [...rest, { category, cover }] : rest
+}
+
+// При слиянии видов остаётся обложка того вида, в который переименовали
+export function renamedKindCovers(list: KindCover[], from: string, to: string): KindCover[] {
+	const source = list.find((k) => k.category === from)
+	if (!source) return list
+	const rest = list.filter((k) => k.category !== from)
+	return rest.some((k) => k.category === to) ? rest : [...rest, { category: to, cover: source.cover }]
+}
+
+const coversMap = (list: KindCover[] = []) => Object.fromEntries(list.map((k) => [k.category, k.cover]))
 
 @Injectable()
 export class ProductsService {
@@ -20,8 +56,15 @@ export class ProductsService {
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Order) private readonly orderModel: ModelType<Order>,
 		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
-		private readonly changeHistoryService: ChangeHistoryService
+		private readonly changeHistoryService: ChangeHistoryService,
+		@InjectModel(ProductPhoto) private readonly photoModel: ModelType<ProductPhoto>,
+		@InjectModel(Message) private readonly messageModel: ModelType<Message>,
+		private readonly realtime: RealtimeService
 	) {}
+
+	private emit(type: string) {
+		this.realtime.emit(getTenantContext()?.company, type)
+	}
 
 	private async assertNoActiveInventory(): Promise<void> {
 		const active = await this.inventoryModel
@@ -102,7 +145,10 @@ export class ProductsService {
 		updateProductDto: UpdateProductDto,
 		currentUser: UserModel
 	): Promise<Product> {
-		await this.assertNoActiveInventory()
+		// Цвет обложки — косметика: без запрета на время инвентаризации, без истории и push, открытые экраны перечитают по realtime
+		const keys = Object.keys(updateProductDto)
+		const cosmeticOnly = keys.length === 1 && keys[0] === 'coverColor'
+		if (!cosmeticOnly) await this.assertNoActiveInventory()
 		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (updateProductDto as any).targetQty
 		}
@@ -110,6 +156,10 @@ export class ProductsService {
 		const updatedProduct = await this.productModel
 			.findByIdAndUpdate(id, updateProductDto, { new: true })
 			.exec()
+		if (cosmeticOnly) {
+			this.emit('product-updated')
+			return updatedProduct
+		}
 		const changes = this.getChanges(oldProduct, updatedProduct)
 		await this.changeHistoryService.createChangeHistory({
 			user: currentUser._id,
@@ -155,6 +205,88 @@ export class ProductsService {
 		})
 
 		return removedProduct
+	}
+
+	async setPhoto(id: string, data?: Buffer): Promise<Product> {
+		const contentType = imageType(data)
+		if (!contentType) throw new BadRequestException('Нужна картинка WebP, PNG или JPEG')
+		const product = await this.productModel.findOne({ _id: id, deletedAt: null }).select('company photo').exec()
+		if (!product) throw new NotFoundException('Товар не найден')
+		// shortcut: две одновременные загрузки у края квоты могут превысить её на одну картинку (до 512 КБ); начнут злоупотреблять — счётчик в местности
+		const [used] = await this.photoModel
+			.aggregate([
+				// нынешнее фото товара не считается: при замене оно удаляется
+				{ $match: { company: product.company, token: { $ne: product.photo ?? null } } },
+				{ $group: { _id: null, bytes: { $sum: { $binarySize: '$data' } } } },
+			])
+			.exec()
+		if ((used?.bytes || 0) + data.length > PHOTO_QUOTA) throw new PayloadTooLargeException('Превышен объём фото местности')
+		const token = randomBytes(16).toString('hex')
+		await this.photoModel.create({ company: product.company, token, contentType, data })
+		return this.swapPhoto(id, token)
+	}
+
+	removePhoto(id: string): Promise<Product> {
+		return this.swapPhoto(id, null)
+	}
+
+	// Прежний документ из findByIdAndUpdate: удаляется ровно та картинка, которую заменили, даже при двух загрузках сразу
+	private async swapPhoto(id: string, photo: string | null): Promise<Product> {
+		const before = await this.productModel.findByIdAndUpdate(id, { photo }).exec()
+		if (!before) throw new NotFoundException('Товар не найден')
+		if (before.photo) await this.photoModel.deleteOne({ token: before.photo }).exec()
+		this.emit('product-updated')
+		return { ...before.toObject(), photo }
+	}
+
+	async getPhoto(token: string): Promise<ProductPhoto> {
+		const photo = await this.photoModel.findOne({ token }).exec()
+		// Отдаём только картинки: даже попавший в базу другой тип не выйдет на домен приложения
+		if (!photo || !IMAGE_TYPES.includes(photo.contentType)) throw new NotFoundException('Картинка не найдена')
+		return photo
+	}
+
+	private async loadKindCovers(): Promise<KindCover[]> {
+		const msg = await this.messageModel.findOne().select('kindCovers').lean().exec()
+		return msg?.kindCovers || []
+	}
+
+	// upsert: у местности документа настроек может ещё не быть
+	// shortcut: чтение-правка-запись, две одновременные правки обложек видов — побеждает последняя; начнут теряться — атомарный $pull/$push
+	private async saveKindCovers(list: KindCover[]): Promise<void> {
+		await this.messageModel.updateOne({}, { $set: { kindCovers: list } }, { upsert: true }).exec()
+	}
+
+	async getKinds() {
+		return { covers: coversMap(await this.loadKindCovers()) }
+	}
+
+	async setKindCover(dto: KindCoverDto) {
+		const list = withKindCover(await this.loadKindCovers(), dto.category, dto.cover)
+		if (list.length > MAX_KIND_COVERS) throw new BadRequestException(`Слишком много обложек видов: не больше ${MAX_KIND_COVERS}`)
+		await this.saveKindCovers(list)
+		this.emit('product-kinds-updated')
+		return { covers: coversMap(list) }
+	}
+
+	async renameKind(dto: RenameKindDto, currentUser: UserModel) {
+		const from = dto.from
+		const to = dto.to.trim()
+		if (!from || !to) throw new BadRequestException('Название вида не может быть пустым')
+		if (from === to) throw new BadRequestException('Новое название вида совпадает с прежним')
+		await this.assertNoActiveInventory()
+		const res = await this.productModel.updateMany({ category: from }, { $set: { category: to } }).exec()
+		const before = await this.loadKindCovers()
+		const list = renamedKindCovers(before, from, to)
+		if (list !== before) await this.saveKindCovers(list)
+		if (!res.matchedCount && list === before) throw new NotFoundException('Вид не найден')
+		await this.changeHistoryService.createChangeHistory({
+			user: currentUser._id,
+			changeType: 'product-updated',
+			description: `${currentUser.name}: Товары вида ${from} обновлены (${res.modifiedCount}). Изменения: Категория изменена с ${from} на ${to}`,
+			changeDate: Date.now(),
+		})
+		return { modified: res.modifiedCount, covers: coversMap(list) }
 	}
 
 	private getChanges(oldProduct: Product, newProduct: Product): string {

@@ -3,7 +3,7 @@
  * Licensed under Apache 2.0
  */
 
-import { IsArray, IsBoolean, IsInt, IsMongoId, IsNotEmpty, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator'
+import { ArrayMinSize, IsArray, IsBoolean, IsInt, IsMongoId, IsNotEmpty, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 
 class OrderItemDto {
@@ -27,6 +27,7 @@ export class UpdateOrderDto {
 
 	@IsOptional()
 	@IsArray()
+	@ArrayMinSize(1, { message: 'Заказ не может быть пустым' })
 	@ValidateNested({ each: true })
 	@Type(() => OrderItemDto)
 	items?: OrderItemDto[]

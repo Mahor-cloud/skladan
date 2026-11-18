@@ -35,7 +35,7 @@ export class DatabaseController {
 	@Auth('user', ['edit-payment-message'])
 	@Put('msg/payment')
 	async updatePaymentMessage(@Body() dto: PaymentMessageDto) {
-		return this.databaseService.updatePaymentMessage(dto.paymentMessage)
+		return this.databaseService.updatePaymentMessage(dto)
 	}
 
 	@Auth('user', ['edit-received-message'])
@@ -78,7 +78,7 @@ export class DatabaseController {
 			throw new BadRequestException('Загруженный файл не является валидным JSON')
 		}
 		const companyId = String((currentUser as any).company || currentUser.company)
-		await this.databaseService.importCompanyData(companyId, data)
+		await this.databaseService.importCompanyData(companyId, data, currentUser)
 		return { message: 'Данные компании успешно импортированы' }
 	}
 
@@ -95,7 +95,8 @@ export class DatabaseController {
 	)
 	async importFullData(
 		@UploadedFile() file: Express.Multer.File,
-		@Query('confirm') confirm: string
+		@Query('confirm') confirm: string,
+		@CurrentUser() currentUser: UserModel
 	) {
 		let data: any
 		try {
@@ -103,7 +104,7 @@ export class DatabaseController {
 		} catch {
 			throw new BadRequestException('Загруженный файл не является валидным JSON')
 		}
-		await this.databaseService.importFullData(data, confirm)
+		await this.databaseService.importFullData(data, confirm, currentUser)
 		return { message: 'Полный дамп успешно импортирован' }
 	}
 }

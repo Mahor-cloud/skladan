@@ -3,7 +3,8 @@
  * Licensed under Apache 2.0
  */
 
-import { IsArray, IsNotEmpty, IsString, MaxLength } from 'class-validator'
+import { ArrayMaxSize, ArrayUnique, IsArray, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator'
+import { MOBILE_TABS } from '../role.model'
 
 export class CreateRoleDto {
 	@IsNotEmpty()
@@ -14,4 +15,11 @@ export class CreateRoleDto {
 	@IsArray()
 	@IsString({ each: true })
 	permissions: string[]
+
+	@IsOptional()
+	@IsArray()
+	@ArrayMaxSize(4)
+	@ArrayUnique()
+	@IsIn(MOBILE_TABS, { each: true })
+	mobileTabs?: string[]
 }

@@ -139,7 +139,9 @@ export class MetricsRegistryService implements OnModuleInit {
 								.map(([k, val]) => `${k}=${String(val)}`)
 								.join(',')
 						: ''
-				const key = labelKey ? `${m.metricName || m.name}{${labelKey}}` : (m.metricName || m.name)
+				// у гистограммы имя несёт само значение: name_bucket, name_sum, name_count
+				const name = v.metricName || m.name
+				const key = labelKey ? `${name}{${labelKey}}` : name
 				if (typeof v.value === 'number') out[key] = v.value
 			}
 		}

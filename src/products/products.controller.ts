@@ -12,13 +12,19 @@ import {
 	Post,
 	Put,
 	Query,
+	Res,
+	UploadedFile,
+	UseInterceptors,
 	UsePipes,
 } from '@nestjs/common'
+import { FileInterceptor } from '@nestjs/platform-express'
+import type { Response } from 'express'
 import { Auth } from 'src/auth/decorators/auth.decorator'
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator'
 import { UserModel } from 'src/auth/user.model'
 import { IdValidationPipe } from 'src/pipes/id.validation.pipe'
 import { CreateProductDto } from './dto/create-product.dto'
+import { KindCoverDto, RenameKindDto } from './dto/kinds.dto'
 import { UpdateProductDto } from './dto/update-product.dto'
 import { ProductsService } from './products.service'
 
@@ -39,6 +45,54 @@ export class ProductsController {
 	@Auth('user', ['view_products'])
 	findAll(@Query('includeDeleted') includeDeleted?: string) {
 		return this.productsService.findAll(includeDeleted === 'true' || includeDeleted === '1')
+	}
+
+	@Get('kinds')
+	@Auth('user', ['view_products'])
+	getKinds() {
+		return this.productsService.getKinds()
+	}
+
+	@Put('kinds/cover')
+	@Auth('admin', ['edit_products'])
+	setKindCover(@Body() dto: KindCoverDto) {
+		return this.productsService.setKindCover(dto)
+	}
+
+	@Put('kinds/rename')
+	@Auth('admin', ['edit_products'])
+	renameKind(@Body() dto: RenameKindDto, @CurrentUser() currentUser: UserModel) {
+		return this.productsService.renameKind(dto, currentUser)
+	}
+
+	// Без авторизации: <img> не шлёт Authorization, ключ неугадываем, обложка не секрет
+	@Get('photo/:token')
+	async getPhoto(@Param('token') token: string, @Res() res: Response) {
+		const photo = await this.productsService.getPhoto(token)
+		// nosniff и sandbox: ответ с домена приложения не исполняется как страница, даже без Caddy
+		res.set({
+			'Content-Type': photo.contentType,
+			'Cache-Control': 'public, max-age=31536000, immutable',
+			'X-Content-Type-Options': 'nosniff',
+			'Content-Security-Policy': "default-src 'none'; sandbox",
+		})
+		res.send(photo.data)
+	}
+
+	@Put(':id/photo')
+	@Auth('admin', ['edit_products'])
+	@UsePipes(IdValidationPipe)
+	// +1 у fileSize и parts: busboy срабатывает, когда счёт достиг лимита, а 512 КБ ровно и одна часть — допустимы
+	@UseInterceptors(FileInterceptor('file', { limits: { fileSize: 512 * 1024 + 1, files: 1, fields: 0, parts: 2 } }))
+	setPhoto(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+		return this.productsService.setPhoto(id, file?.buffer)
+	}
+
+	@Delete(':id/photo')
+	@Auth('admin', ['edit_products'])
+	@UsePipes(IdValidationPipe)
+	removePhoto(@Param('id') id: string) {
+		return this.productsService.removePhoto(id)
 	}
 
 	@Get(':id')

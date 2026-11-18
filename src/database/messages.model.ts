@@ -10,6 +10,14 @@ import { Company } from '../company/company.model'
 
 export interface Message extends Base {}
 
+export class KindCover {
+	@prop({ required: true })
+	category: string
+
+	@prop({ required: true })
+	cover: string
+}
+
 @plugin(tenantPlugin)
 @modelOptions({
 	options: {
@@ -24,6 +32,15 @@ export class Message {
 	paymentMessage: string
 
 	@prop()
+	paymentCard?: string
+
+	@prop()
+	paymentPhone?: string
+
+	@prop()
+	paymentHolder?: string
+
+	@prop()
 	receivedMessage: string
 
 	@prop({ default: 0, min: 0 })
@@ -31,4 +48,8 @@ export class Message {
 
 	@prop({ default: false })
 	allowInventoryWithOpenDocs: boolean
+
+	// Массив пар, а не объект-словарь: вид — свободная строка, в ключе Map нельзя «.» и «$»
+	@prop({ type: () => [KindCover], _id: false, default: undefined })
+	kindCovers?: KindCover[]
 }

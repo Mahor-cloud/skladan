@@ -21,6 +21,21 @@ export class PaymentMessageDto {
 	@IsString()
 	@MaxLength(2000)
 	paymentMessage: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(100)
+	paymentCard?: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(100)
+	paymentPhone?: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(100)
+	paymentHolder?: string
 }
 
 export class ReceivedMessageDto {

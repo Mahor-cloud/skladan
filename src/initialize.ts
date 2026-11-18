@@ -9,6 +9,7 @@ import { getModelForClass } from '@typegoose/typegoose'
 import { genSalt, hash } from 'bcryptjs'
 import mongoose from 'mongoose'
 import { UserModel } from './auth/user.model'
+import { CABINET_UNIQUE_KEYS, CABINET_UNIQUE_OPTIONS } from './cabinet/cabinet-item.model'
 import { Company } from './company/company.model'
 import { ALL_PERMISSIONS, Role } from './roles/role.model'
 import { DEFAULT_SEED_PRODUCTS, DEFAULT_SEED_ROLES } from './seeds/default-seed.data'
@@ -118,6 +119,17 @@ export async function initializeDatabase(configService: ConfigService) {
 					`SeedTemplate was empty — backfilled (${DEFAULT_SEED_ROLES.length} roles, ${DEFAULT_SEED_PRODUCTS.length} products)`
 				)
 			}
+		}
+
+		// Условие уникального индекса «Моего склада» изменилось (свои позиции исключены), а индекс
+		// с прежним условием Mongoose сам не меняет — пересоздаём один раз
+		const cabinet = mongoose.connection.collection('CabinetItems')
+		const cabinetIndexes: any[] = await cabinet.indexes().catch(() => [])
+		const stale = cabinetIndexes.find((i) => i.name === 'user_1_product_1_deletedAt_1' && !i.partialFilterExpression?.product)
+		if (stale) {
+			await cabinet.dropIndex(stale.name)
+			await cabinet.createIndex(CABINET_UNIQUE_KEYS, CABINET_UNIQUE_OPTIONS)
+			logger.log('CabinetItems: unique index recreated (own items excluded)')
 		}
 
 		logger.log('initializeDatabase: OK')

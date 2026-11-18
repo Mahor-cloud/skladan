@@ -9,6 +9,7 @@ import { ModelType } from '@typegoose/typegoose/lib/types'
 import { genSalt, hash } from 'bcryptjs'
 import { createHash } from 'crypto'
 import { InjectModel } from 'nestjs-typegoose'
+import { AuthService } from '../auth/auth.service'
 import { UserModel } from '../auth/user.model'
 import { RealtimeService } from '../change-history/realtime.service'
 import { ALL_PERMISSIONS, Role } from '../roles/role.model'
@@ -30,7 +31,9 @@ export class CompanyService {
 		private readonly jwtService: JwtService,
 		@Inject(forwardRef(() => SeedsService))
 		private readonly seedsService: SeedsService,
-		private readonly realtime: RealtimeService
+		private readonly realtime: RealtimeService,
+		@Inject(forwardRef(() => AuthService))
+		private readonly authService: AuthService
 	) {}
 
 	async create(dto: CreateCompanyDto, currentUser: UserModel): Promise<Company> {
@@ -145,7 +148,11 @@ export class CompanyService {
 		}
 		const salt = await genSalt(12)
 		admin.password = await hash(dto.password, salt)
+		// прежние сессии этого пользователя завершаются
+		admin.tokenVersion = (admin.tokenVersion || 0) + 1
+		admin.refreshToken = undefined
 		await admin.save()
+		this.authService.forgetLoginFails(admin.login)
 		return { ok: true, login: admin.login }
 	}
 
@@ -173,7 +180,7 @@ export class CompanyService {
 			login: admin.login,
 			tokenVersion: nextTokenVersion,
 		}
-		const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: '30d' })
+		const refreshToken = await this.jwtService.signAsync({ ...payload, typ: 'refresh' }, { expiresIn: '30d' })
 		const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '1h' })
 
 		const refreshHash = createHash('sha256').update(refreshToken).digest('hex')
@@ -264,7 +271,7 @@ export class CompanyService {
 		const collections = [
 			'Users', 'Products', 'Orders', 'Purchases', 'Inventory',
 			'Roles', 'Message', 'Subscriptions', 'ChangeHistory',
-			'CabinetItems', 'Counter',
+			'CabinetItems', 'Counter', 'ProductPhotos',
 		]
 		const deletedCounts: any = {}
 		const failed: string[] = []

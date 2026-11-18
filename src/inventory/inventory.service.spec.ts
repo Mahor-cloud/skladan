@@ -4,6 +4,7 @@
  */
 
 import { BadRequestException } from '@nestjs/common'
+import { InventoryService } from './inventory.service'
 
 type UpdateOneFn = (filter: any, update: any) => Promise<void>
 
@@ -253,5 +254,119 @@ describe('assertNoSubsequentInventory', () => {
 			startDate: { $gt: 5000 },
 			_id: { $ne: 'inv1' },
 		})
+	})
+})
+
+// Цены строк инвентаризации: сервис на подставных моделях, проверяется то, что уходит в запись
+describe('цены строк инвентаризации', () => {
+	const A = 'a'.repeat(24)
+	const B = 'b'.repeat(24)
+	const user: any = { _id: 'u1', name: 'Админ', company: 'c1' }
+	const clone = (v: any) => JSON.parse(JSON.stringify(v))
+	const q = (v: any) => {
+		const o: any = { exec: async () => v, select: () => o, lean: () => o, populate: () => o }
+		return o
+	}
+	const prod = (id: string, price: number) => ({ _id: id, price })
+
+	async function run(inventory: any, products: any[], dto: any) {
+		const cap: any = { writes: [], stock: [], history: [] }
+		let doc = clone(inventory)
+		const svc = new InventoryService(
+			{
+				findById: () => q(clone(inventory)),
+				findOne: () => q(null),
+				findByIdAndUpdate: (_id: any, patch: any) => {
+					cap.writes.push(patch)
+					doc = { ...doc, ...clone(patch) }
+					return q(clone(doc))
+				},
+			} as any,
+			{ find: () => q(products), updateOne: (f: any, u: any) => (cap.stock.push([String(f._id), u]), q({})) } as any,
+			{} as any,
+			{} as any,
+			{} as any,
+			{ createChangeHistory: async (h: any) => cap.history.push(h.description) } as any
+		)
+		cap.result = await svc.update('i1', dto, user)
+		return cap
+	}
+	const line = (product: string, newQuantity: number, quantity: number) => ({ product, newQuantity, quantity })
+	const open = { _id: 'i1', startDate: 1000, isCompleted: false, comment: '', items: [line(A, 5, 5), line(B, 2, 2)] }
+
+	it('открытая инвентаризация цен не хранит', async () => {
+		const cap = await run(open, [prod(A, 100), prod(B, 20)], { isCompleted: false, items: [line(A, 4, 5), line(B, 2, 2)] })
+		expect(cap.writes).toHaveLength(1)
+		expect(cap.writes[0].items).toEqual([line(A, 4, 5), line(B, 2, 2)])
+		expect(cap.stock).toEqual([])
+	})
+
+	it('завершение записывает в строки цены этого момента', async () => {
+		const cap = await run(open, [prod(A, 100), prod(B, 20)], { isCompleted: true, items: [line(A, 4, 5), line(B, 2, 2)] })
+		expect(cap.writes[1]).toEqual({
+			isCompleted: true,
+			items: [
+				{ ...line(A, 4, 5), price: 100 },
+				{ ...line(B, 2, 2), price: 20 },
+			],
+		})
+		expect(cap.result.items.map((i: any) => i.price)).toEqual([100, 20])
+		expect(cap.stock).toHaveLength(2)
+	})
+
+	it('завершение без изменения количеств не пишет в историю «Количество товаров изменено»', async () => {
+		const cap = await run(open, [prod(A, 100), prod(B, 20)], { isCompleted: true, items: [line(A, 5, 5), line(B, 2, 2)] })
+		expect(cap.history[0]).toContain('Инвентаризация завершена')
+		expect(cap.history[0]).not.toContain('Количество товаров изменено')
+	})
+
+	it('правка завершённой после смены цены: цены строк остаются, склад меняется на разницу', async () => {
+		const done = { ...open, isCompleted: true, items: [{ ...line(A, 4, 5), price: 100 }, { ...line(B, 2, 2), price: 20 }] }
+		const cap = await run(done, [prod(A, 150), prod(B, 30)], { isCompleted: true, editReason: 'пересчёт', items: [line(A, 3, 5), line(B, 2, 2)] })
+		expect(cap.writes).toHaveLength(1)
+		expect(cap.writes[0].items).toEqual([
+			{ ...line(A, 3, 5), price: 100 },
+			{ ...line(B, 2, 2), price: 20 },
+		])
+		expect(cap.stock).toEqual([[A, { $inc: { quantity: -1 } }]])
+		expect(cap.history[0]).toContain('Количество товаров изменено')
+	})
+
+	it('завершение одним флагом: товар остаётся в том виде, как записан; товара нет в базе — цена 0', async () => {
+		const oid = { toString: () => A, toJSON: () => A }
+		const inv = { ...open, items: [{ product: oid, newQuantity: 5, quantity: 5 }, line(B, 2, 2)] }
+		const cap: any = { writes: [] }
+		const svc = new InventoryService(
+			{
+				findById: () => q({ ...inv }),
+				findOne: () => q(null),
+				findByIdAndUpdate: (_id: any, patch: any) => (cap.writes.push(patch), q({ ...inv, ...patch })),
+			} as any,
+			{ find: () => q([prod(A, 100)]), updateOne: () => q({}) } as any,
+			{} as any,
+			{} as any,
+			{} as any,
+			{ createChangeHistory: async () => null } as any
+		)
+		await svc.update('i1', { isCompleted: true } as any, user)
+		expect(cap.writes[1].items[0].product).toBe(oid)
+		expect(cap.writes[1].items.map((i: any) => i.price)).toEqual([100, 0])
+	})
+
+	it('правка завершённой с ценами: товар, которого в ней не было, берёт текущую цену', async () => {
+		const done = { ...open, isCompleted: true, items: [{ ...line(A, 4, 5), price: 100 }] }
+		const cap = await run(done, [prod(A, 150), prod(B, 30)], { editReason: 'пересчёт', items: [line(A, 4, 5), line(B, 1, 0)] })
+		expect(cap.writes[0].items).toEqual([
+			{ ...line(A, 4, 5), price: 100 },
+			{ ...line(B, 1, 0), price: 30 },
+		])
+		expect(cap.stock).toEqual([[B, { $inc: { quantity: 1 } }]])
+	})
+
+	it('старая завершённая без цен в строках: правка цен не назначает', async () => {
+		const done = { ...open, isCompleted: true }
+		const cap = await run(done, [prod(A, 150), prod(B, 30)], { editReason: 'пересчёт', items: [line(A, 4, 5), line(B, 2, 2)] })
+		expect(cap.writes[0].items).toEqual([line(A, 4, 5), line(B, 2, 2)])
+		expect('price' in cap.writes[0].items[0]).toBe(false)
 	})
 })
