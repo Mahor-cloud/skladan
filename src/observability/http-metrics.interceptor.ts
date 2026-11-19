@@ -22,6 +22,8 @@ export class HttpMetricsInterceptor implements NestInterceptor {
 		const url: string = String(req.originalUrl || req.url || '')
 
 		if (url.startsWith('/api/observability/metrics')) return next.handle()
+		// Фоновая отправка счётчика использования — не действие пользователя: ни «активны сейчас», ни графики запросов её не считают
+		if (url.startsWith('/api/usage') && String(req.method).toUpperCase() === 'POST') return next.handle()
 
 		const method = String(req.method || 'GET').toUpperCase()
 		const start = process.hrtime.bigint()

@@ -271,7 +271,7 @@ export class CompanyService {
 		const collections = [
 			'Users', 'Products', 'Orders', 'Purchases', 'Inventory',
 			'Roles', 'Message', 'Subscriptions', 'ChangeHistory',
-			'CabinetItems', 'Counter', 'ProductPhotos',
+			'CabinetItems', 'Counter', 'ProductPhotos', 'UsageStats', 'UsageMonths', 'UsageRoles',
 		]
 		const deletedCounts: any = {}
 		const failed: string[] = []

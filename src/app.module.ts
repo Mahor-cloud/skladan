@@ -29,6 +29,7 @@ import { PurchasesModule } from './purchases/purchases.module'
 import { RolesModule } from './roles/roles.module'
 import { SeedsModule } from './seeds/seeds.module'
 import { StatisticsModule } from './statistics/statistics.module'
+import { UsageModule } from './usage/usage.module'
 
 @Module({
 	imports: [
@@ -58,6 +59,7 @@ import { StatisticsModule } from './statistics/statistics.module'
 		SeedsModule,
 		HealthModule,
 		ObservabilityModule,
+		UsageModule,
 	],
 	providers: [
 		{
