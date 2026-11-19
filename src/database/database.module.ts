@@ -19,6 +19,7 @@ import { Product } from 'src/products/product.model'
 import { Purchase } from 'src/purchases/purchase.model'
 import { Role } from 'src/roles/role.model'
 import { DatabaseController } from './database.controller'
+import { BackupService } from './backup.service'
 import { DatabaseService } from './database.service'
 import { Message } from './messages.model'
 
@@ -48,6 +49,6 @@ import { Message } from './messages.model'
 		forwardRef(() => ChangeHistoryModule),
 	],
 	controllers: [DatabaseController],
-	providers: [DatabaseService],
+	providers: [DatabaseService, BackupService],
 })
 export class DatabaseModule {}

@@ -11,20 +11,27 @@ import {
 	Post,
 	Put,
 	Query,
+	StreamableFile,
 	UploadedFile,
 	UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
+import { Throttle } from '@nestjs/throttler'
+import { createReadStream } from 'fs'
 import { Auth } from 'src/auth/decorators/auth.decorator'
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator'
 import { SuperAdminAuth } from 'src/auth/decorators/super-admin-auth.decorator'
 import { UserModel } from 'src/auth/user.model'
+import { BackupService } from './backup.service'
 import { DatabaseService } from './database.service'
 import { InventoryOpenDocsDto, PaymentMessageDto, ReceivedMessageDto, TargetWarehouseValueDto } from './messages.dto'
 
 @Controller('database')
 export class DatabaseController {
-	constructor(private readonly databaseService: DatabaseService) {}
+	constructor(
+		private readonly databaseService: DatabaseService,
+		private readonly backupService: BackupService
+	) {}
 
 	@Auth('user', ['view-messages'])
 	@Get('msg')
@@ -106,5 +113,22 @@ export class DatabaseController {
 		}
 		await this.databaseService.importFullData(data, confirm, currentUser)
 		return { message: 'Полный дамп успешно импортирован' }
+	}
+
+	/** Последний полный бэкап, сделанный кнопкой: { name, size, at } или null. */
+	@SuperAdminAuth()
+	@Get('backup')
+	async lastBackup() {
+		return this.backupService.last()
+	}
+
+	/** Снять новый полный бэкап базы (прежние, сделанные этой кнопкой, удаляются) и отдать его файлом. */
+	// Бэкап — тяжёлая операция: не чаще шести запросов в минуту с адреса; одновременно — только один (остальным 409)
+	@Throttle({ default: { limit: 6, ttl: 60_000 } })
+	@SuperAdminAuth()
+	@Post('backup')
+	async createBackup(): Promise<StreamableFile> {
+		const { name, size, path } = await this.backupService.create()
+		return new StreamableFile(createReadStream(path), { type: 'application/x-tar', disposition: `attachment; filename="${name}"`, length: size })
 	}
 }
