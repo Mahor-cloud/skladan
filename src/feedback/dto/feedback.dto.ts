@@ -18,22 +18,6 @@ export class FeedbackDto {
 	text: string
 }
 
-export class FeedbackSettingsDto {
-	/** Пусто или нет поля — прежний токен остаётся. Вид токена Telegram «цифры:буквы» — он же не даёт подставить в адрес лишнее */
-	@IsOptional()
-	@Transform(trim)
-	@IsString()
-	@Matches(/^(\d{1,20}:[\w-]{20,100})?$/, { message: 'Токен бота указан неверно' })
-	token?: string
-
-	/** Пусто — получателя нет, обратная связь выключена */
-	@IsOptional()
-	@Transform(trim)
-	@IsString()
-	@Matches(/^(-?\d{1,20})?$/, { message: 'ID получателя — число' })
-	chatId?: string
-}
-
 /** Страница списка: limit — сколько (1…100, по умолчанию 50), before — номер последнего показанного сообщения */
 export class FeedbackListDto {
 	@IsOptional()

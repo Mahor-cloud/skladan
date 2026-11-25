@@ -3,19 +3,19 @@
  * Licensed under Apache 2.0
  */
 
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common'
 import { Auth } from '../auth/decorators/auth.decorator'
 import { CurrentUser } from '../auth/decorators/current-user.decorator'
 import { SuperAdminAuth } from '../auth/decorators/super-admin-auth.decorator'
 import { IdValidationPipe } from '../pipes/id.validation.pipe'
-import { FeedbackDeleteDto, FeedbackDto, FeedbackListDto, FeedbackReadDto, FeedbackSettingsDto } from './dto/feedback.dto'
+import { FeedbackDeleteDto, FeedbackDto, FeedbackListDto, FeedbackReadDto } from './dto/feedback.dto'
 import { FeedbackService } from './feedback.service'
 
 @Controller('feedback')
 export class FeedbackController {
 	constructor(private readonly feedback: FeedbackService) {}
 
-	/** Баги, пожелания, предложения: сохраняется в приложении, в Telegram — фоном, если он настроен. Пределы — в сервисе */
+	/** Баги, пожелания, предложения: сохраняется в приложении, читает супер-админ. Пределы — в сервисе */
 	@Auth()
 	@Post()
 	submit(@CurrentUser() user: any, @Body() dto: FeedbackDto) {
@@ -51,23 +51,5 @@ export class FeedbackController {
 	@Delete(':id')
 	remove(@Param('id', IdValidationPipe) id: string) {
 		return this.feedback.remove(id)
-	}
-
-	@SuperAdminAuth()
-	@Get('settings')
-	settings() {
-		return this.feedback.settings()
-	}
-
-	@SuperAdminAuth()
-	@Put('settings')
-	saveSettings(@Body() dto: FeedbackSettingsDto) {
-		return this.feedback.saveSettings(dto)
-	}
-
-	@SuperAdminAuth()
-	@Post('settings/test')
-	test() {
-		return this.feedback.test()
 	}
 }
