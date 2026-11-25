@@ -1285,6 +1285,25 @@ export class LitnaService {
 		return status
 	}
 
+	/**
+	 * Заказ без ключа (оформлен на самом сайте или найден в кабинете уже оплаченным): статус — из строки списка заказов кабинета.
+	 * null — спросить не у кого: в этой сессии сайта сейчас оформляют заказ или заказа нет на первой странице списка.
+	 */
+	private async listedStatus(placed: Placed): Promise<SiteStatus | null> {
+		if (this.ordering.has(String(placed.company))) return null
+		// сохранённый вход уже не работает — раз в час неудачно входить на сайт незачем, ждём входа человека
+		if ((await this.findAccount())?.loginFailed) return null
+		// shortcut: видна только первая страница списка заказов; ушёл с неё — статус больше не меняется, тогда читать страницу заказа
+		const list = await (await this.sessionFor(placed)).orders()
+		// список не разобран (сайт сменил страницу, не вошли) — в журнал, а не молча: иначе слежение тихо остановится
+		if (!list) throw new BadGatewayException('lit-na.ru не показал заказы кабинета')
+		const row = list.orders.find((o) => o.orderId === placed.orderId)
+		if (!row) return null
+		// запись заказа знает статус сама: по ней (без ключа) отвечают остальные проверки
+		if (row.status !== placed.info?.status) await this.orderModel.updateOne({ _id: placed._id }, { info: { ...placed.info, status: row.status } }).exec()
+		return { paid: isPaidStatus(row.status), status: row.status }
+	}
+
 	async check(id: string, user: UserModel) {
 		return this.draftLocked(id, user, () => this.checkPlaced(id, user))
 	}
@@ -1533,7 +1552,7 @@ export class LitnaService {
 				.exec()
 			if (!paid.length) return
 			const records = await this.orderModel
-				.find({ purchase: { $in: paid.map((p) => p._id) }, deletedAt: null, orderId: { $type: 'number' }, orderKey: { $nin: [null, ''] } })
+				.find({ purchase: { $in: paid.map((p) => p._id) }, deletedAt: null, orderId: { $type: 'number' }, $or: [{ orderKey: { $nin: [null, ''] } }, { guest: { $ne: true } }] })
 				.setOptions(skip)
 				.sort({ lateAt: 1 })
 				.limit(LATE_BATCH)
@@ -1546,8 +1565,8 @@ export class LitnaService {
 				const company = String(r.company ?? purchase.company)
 				await tenantContextStorage
 					.run({ company, isSuperAdmin: false, userId: null, bypass: false }, async () => {
-						const site = await this.siteStatus(r as Placed)
-						if (site.missing || !site.status || site.status === purchase.litna?.status) return
+						const site = r.orderKey ? await this.siteStatus(r as Placed) : await this.listedStatus(r as Placed)
+						if (!site || site.missing || !site.status || site.status === purchase.litna?.status) return
 						const shipped = isShipped(site.status)
 						// условная запись: две проверки подряд (или два сервера) не напишут в историю дважды
 						const written = await this.purchaseModel

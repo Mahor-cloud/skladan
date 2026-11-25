@@ -1172,6 +1172,60 @@ describe('оплата, проверка, удаление', () => {
 		expect(db.history).toHaveLength(2)
 	})
 
+	it('заказ без ключа (оформлен на самом сайте): статус — из списка заказов кабинета; гостевой без ключа и заказ, которого в списке нет, не трогаются', async () => {
+		const site = withOrder({ paid: true, status: 'processing' })
+		const keyless = { ...placed, company: 'c1', orderKey: '', info: { orderId: 501, status: 'processing', total: 3625 } }
+		const { svc, db } = setup({ placed: keyless, purchase: { ...created, isPaid: true, litna: { orderId: 501, status: 'processing', total: 3625 } } })
+		const asked: any = {}
+		const list = (rows: () => any[], key: string) => (f: any) => {
+			asked[key] = f
+			const o: any = { setOptions: () => o, select: () => o, sort: () => o, limit: () => o, lean: () => o, exec: async () => rows() }
+			return o
+		}
+		;(svc as any).purchaseModel.find = list(() => [{ _id: 'pu1', company: 'c1', purchaseNumber: 32, litna: { status: 'processing' } }], 'purchases')
+		;(svc as any).orderModel.find = list(() => [db.placed], 'orders')
+		;(svc as any).orderModel.updateMany = () => ({ setOptions: () => ({ exec: async () => ({}) }) })
+		const writes: any[] = []
+		;(svc as any).purchaseModel.updateOne = (_f: any, u: any) => ({ exec: async () => (writes.push(u), { modifiedCount: 1 }) })
+		const statusAsked = () => site.calls.filter((c) => c.path === '/wp-admin/admin-ajax.php').length
+		await svc.shippedCheck()
+		expect(asked.orders.$or).toEqual([{ orderKey: { $nin: [null, ''] } }, { guest: { $ne: true } }])
+		expect(writes).toEqual([])
+		// магазин отправил заказ: ключа нет — по ключу не спрашиваем, читаем список
+		site.orders.get(501).status = 'delivery'
+		await svc.shippedCheck()
+		expect(statusAsked()).toBe(0)
+		expect(writes).toEqual([{ 'litna.status': 'delivery', 'litna.shippedAt': expect.any(Number) }])
+		expect(db.placed.info.status).toBe('delivery')
+		expect(db.history).toEqual([expect.objectContaining({ changeType: 'litna-shipped', description: 'Заказ №501 на lit-na.ru отправлен — закупка №32' })])
+		// в этой сессии сайта сейчас оформляют заказ — не мешаем
+		site.orders.get(501).status = 'cancelled'
+		;(svc as any).ordering.add('c1')
+		await svc.shippedCheck()
+		expect(writes).toHaveLength(1)
+		;(svc as any).ordering.clear()
+		// сохранённый вход не работает — на сайт не ходим; список не разобран — без записей и без ошибки наружу
+		const calls = site.calls.length
+		db.account.loginFailed = true
+		await svc.shippedCheck()
+		expect(site.calls.length).toBe(calls)
+		db.account.loginFailed = false
+		site.ordersBroken = true
+		await expect(svc.shippedCheck()).resolves.toBeUndefined()
+		expect(site.calls.length).toBeGreaterThan(calls)
+		expect(writes).toHaveLength(1)
+		site.ordersBroken = false
+		// заказа нет на первой странице списка; гостевой без ключа — спросить не у кого
+		site.orders.clear()
+		site.orders.set(777, { key: 'wc_order_X', status: 'cancelled', paid: false, total: 100 })
+		await svc.shippedCheck()
+		db.placed.guest = true
+		site.orders.set(501, { key: 'wc_order_K', status: 'cancelled', paid: false, total: 100 })
+		await svc.shippedCheck()
+		expect(writes).toHaveLength(1)
+		expect(db.history).toHaveLength(1)
+	})
+
 	it('проверка черновика с заказом: оплачен — «создана» и «оплачена»; отменён — снова черновик', async () => {
 		withOrder({ paid: true, status: 'completed' })
 		let ctx = setup({ placed, purchase: { isCreated: false, litna: { orderId: 501, status: 'pending' } } })
