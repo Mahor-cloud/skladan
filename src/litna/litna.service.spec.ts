@@ -1568,14 +1568,14 @@ describe('адрес одной строкой, права, миниатюры',
 		expect(prewarmPoints).toHaveBeenCalledTimes(2)
 	})
 
-	it('аккаунт тому, кто только видит закупки: без получателя, адреса и почты входа', async () => {
+	it('аккаунт тому, кто только видит закупки: без получателя, адреса, пункта выдачи и почты входа', async () => {
 		fakeSite()
 		const { svc } = setup()
 		const brief = await svc.account(false)
-		expect(brief).toEqual({ configured: true, login: true, loginFailed: false, delivery: { kind: 'cdek_pvz', title: 'SAR6, Саратов, ул. Тестовая' } })
+		expect(brief).toEqual({ configured: true, login: true, loginFailed: false })
 		expect(JSON.stringify(brief)).not.toMatch(/Иван|Петров|79000000000|na@example\.org|SAR6"/)
 		expect(await setup({ account: { login: '', password: '' } }).svc.account(false)).toMatchObject({ login: null })
-		expect(await setup({ account: null }).svc.account(false)).toEqual({ configured: false, login: null, loginFailed: false, delivery: null })
+		expect(await setup({ account: null }).svc.account(false)).toEqual({ configured: false, login: null, loginFailed: false })
 	})
 
 	it('картинка товара сайта: тому, кто может создавать или править товары, и супер-админу', async () => {

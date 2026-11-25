@@ -241,10 +241,8 @@ export class LitnaService {
 	 */
 	async account(full = true) {
 		const a = await this.findAccount()
-		if (!full) {
-			const d = a?.delivery
-			return { configured: ready(a), login: loggedIn(a) || null, loginFailed: !!(loggedIn(a) && a.loginFailed), delivery: d ? { kind: d.kind, title: d.title || '' } : null }
-		}
+		// без права настройки — только признаки: получатель, адрес, пункт выдачи и почта аккаунта наружу не уходят
+		if (!full) return { configured: ready(a), login: loggedIn(a) || null, loginFailed: !!(loggedIn(a) && a.loginFailed) }
 		return {
 			configured: ready(a),
 			login: loggedIn(a) ? a.login : null,
