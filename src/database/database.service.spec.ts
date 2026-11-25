@@ -12,7 +12,7 @@ function makeService() {
 	const messageModel: any = { findOneAndUpdate: jest.fn(() => ({ exec: async () => ({}) })) }
 	const realtime: any = { emit: jest.fn() }
 	const m: any = {}
-	const service = new DatabaseService(m, messageModel, m, m, m, m, m, m, m, m, m, m, realtime)
+	const service = new DatabaseService(m, messageModel, m, m, m, m, m, m, m, m, m, m, realtime, m)
 	return { service, messageModel }
 }
 
@@ -53,12 +53,14 @@ function makeImportService() {
 		m.find = jest.fn(() => query)
 		m.foreign = 0
 		m.countDocuments = jest.fn(() => ({ setOptions: async () => m.foreign }))
+		m.distinct = jest.fn(() => ({ setOptions: () => ({ exec: async () => m.tokens || [] }) }))
+		m.updateMany = jest.fn(() => ({ setOptions: () => ({ exec: async () => undefined }) }))
 		return m
 	}
-	const [inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo] = Array.from({ length: 12 }, model)
+	const [inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo, cabinet] = Array.from({ length: 13 }, model)
 	const realtime: any = { emit: jest.fn() }
-	const service = new DatabaseService(inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo, realtime)
-	return { service, all: [inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo], product, photo, user, order, role }
+	const service = new DatabaseService(inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo, realtime, cabinet)
+	return { service, all: [inventory, message, role, purchase, product, order, user, subscription, history, company, counter, photo], product, photo, user, order, role, cabinet }
 }
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...new Array(16).fill(0)])
@@ -213,5 +215,33 @@ describe('full import', () => {
 		const e = await bad.service.importFullData({ _meta: { type: 'full' }, companies: 'x' }, 'i-know-what-i-am-doing').catch((err) => err)
 		expect(e.message).toBe('Повреждённый дамп: «companies» должно быть списком записей')
 		for (const m of bad.all) expect(m.deleteMany).not.toHaveBeenCalled()
+	})
+})
+
+describe('фото своих позиций «Моего склада» в выгрузке и импорте', () => {
+	it('в выгрузку не идут; импорт их не берёт и не стирает; ключи пропавших фото у позиций склада обнуляются', async () => {
+		const { service, photo, cabinet, user } = makeImportService()
+		user.current = [{ _id: 'u1', login: 'adm', company: 'c1', password: 'h' }]
+		photo.tokens = [T1]
+		const dump = {
+			_meta: { type: 'company' },
+			users: [{ _id: '64a000000000000000000001', login: 'adm', company: 'c1' }],
+			productPhotos: [
+				{ token: T1, data: PNG.toString('base64') },
+				{ token: T3, data: PNG.toString('base64'), user: 'u7' },
+			],
+		}
+		await service.importCompanyData('c1', dump, { _id: '64a000000000000000000001', login: 'adm' } as any)
+		expect(photo.insertMany.mock.calls[0][0].map((p: any) => p.token)).toEqual([T1])
+		expect(photo.deleteMany).toHaveBeenCalledWith({ user: null })
+		expect(cabinet.updateMany).toHaveBeenCalledWith({ photo: { $ne: null, $nin: [T1] } }, { photo: null })
+	})
+
+	it('выгрузка местности берёт только общие фото товаров', async () => {
+		const find = jest.fn(() => ({ select: () => ({ exec: async () => [] }), exec: async () => [] }))
+		const m: any = { find }
+		const service = new DatabaseService(m, m, m, m, m, m, m, m, m, m, m, m, { emit: jest.fn() } as any, m)
+		await service.exportCompanyData()
+		expect(find.mock.calls.some((c: any[]) => c[0]?.user === null)).toBe(true)
 	})
 })

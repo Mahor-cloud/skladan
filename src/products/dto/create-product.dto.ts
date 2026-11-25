@@ -36,4 +36,10 @@ export class CreateProductDto {
 	@IsString()
 	@Matches(/^#[0-9a-fA-F]{6}$/)
 	coverColor?: string | null
+
+	// товар на lit-na.ru: null — намеренно без пары
+	@IsOptional()
+	@IsInt()
+	@Min(1)
+	litnaId?: number | null
 }

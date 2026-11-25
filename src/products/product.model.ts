@@ -41,6 +41,10 @@ export class Product {
 	@prop()
 	photo?: string
 
+	/** Товар на lit-na.ru: нет поля — пару не выбирали, null — намеренно без пары, число — id товара сайта */
+	@prop()
+	litnaId?: number | null
+
 	@prop({ default: () => Date.now() })
 	createdAt?: number
 

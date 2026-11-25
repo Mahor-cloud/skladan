@@ -90,6 +90,36 @@ async function caught(p: Promise<any>): Promise<any> {
 	throw new Error('expected a rejection')
 }
 
+describe('update: пара на lit-na.ru — косметика', () => {
+	const build = () => {
+		const { service, history } = makeService({ activeInventory: { _id: 'inv' } })
+		const productModel: any = (service as any).productModel
+		productModel.findById = jest.fn(() => q({ _id: 'p1', name: 'Книга' }))
+		productModel.findByIdAndUpdate = jest.fn((_id: string, dto: any) => q({ _id: 'p1', name: 'Книга', ...dto }))
+		return { service, history, productModel }
+	}
+
+	it('одна только пара (и цвет) — пишется и во время инвентаризации; в историю — без push; null — намеренно без пары', async () => {
+		const { service, history, productModel } = build()
+		await service.update('p1', { litnaId: 12941 } as any, user)
+		await service.update('p1', { litnaId: null, coverColor: '#0147B9' } as any, user)
+		expect(productModel.findByIdAndUpdate.mock.calls.map((c: any[]) => c[1])).toEqual([{ litnaId: 12941 }, { litnaId: null, coverColor: '#0147B9' }])
+		expect(history.createChangeHistory.mock.calls).toEqual([
+			[expect.objectContaining({ changeType: 'litna-links-updated', description: 'Привязка к lit-na.ru изменена: 1 товар' }), { push: false }],
+			[expect.objectContaining({ changeType: 'litna-links-updated' }), { push: false }],
+		])
+		// один только цвет — без истории, как раньше
+		history.createChangeHistory.mockClear()
+		await service.update('p1', { coverColor: '#7A2140' } as any, user)
+		expect(history.createChangeHistory).not.toHaveBeenCalled()
+	})
+
+	it('пара вместе с ценой — обычная правка: во время инвентаризации запрещена', async () => {
+		const { service } = build()
+		expect((await caught(service.update('p1', { litnaId: 1, price: 10 } as any, user))).getStatus()).toBe(400)
+	})
+})
+
 describe('renameKind', () => {
 	it('empty or unchanged name is 400 and touches nothing', async () => {
 		const { service, productModel } = makeService({ matched: 3 })
@@ -141,10 +171,12 @@ function makePhotoService(opts: { product?: any; usedBytes?: number; stored?: an
 		findOne: jest.fn(() => q(opts.product ?? null)),
 		findByIdAndUpdate: jest.fn(() => q({ photo: opts.product?.photo, toObject: () => ({ _id: 'p1' }) })),
 	}
+	// подсчёт видит записанные, но не удалённые картинки — как база
+	const saved = new Map<string, number>()
 	const photoModel: any = {
-		aggregate: jest.fn(() => q(opts.usedBytes == null ? [] : [{ bytes: opts.usedBytes }])),
-		create: jest.fn(async () => ({})),
-		deleteOne: jest.fn(() => q({})),
+		aggregate: jest.fn(() => q(opts.usedBytes == null && !saved.size ? [] : [{ bytes: [...saved.values()].reduce((a, b) => a + b, opts.usedBytes ?? 0) }])),
+		create: jest.fn(async (doc: any) => saved.set(doc.token, doc.data.length)),
+		deleteOne: jest.fn((f: any) => (saved.delete(f.token), q({}))),
 		findOne: jest.fn(() => q(opts.stored ?? null)),
 	}
 	const messageModel: any = {
@@ -160,19 +192,32 @@ const QUOTA = 30 * 1024 * 1024
 const png = pad([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 describe('setPhoto limits', () => {
-	it('company quota: over 30 MB is 413 with Russian text, nothing stored; the photo being replaced is not counted', async () => {
-		const { service, photoModel } = makePhotoService({ product: { company: 'c1', photo: 'old' }, usedBytes: QUOTA - png.length + 1 })
+	it('company quota: insert, count with it, over 30 MB is rolled back with 413; the photo being replaced is not counted', async () => {
+		const { service, productModel, photoModel } = makePhotoService({ product: { company: 'c1', photo: 'old' }, usedBytes: QUOTA - png.length + 1 })
 		const e = await caught(service.setPhoto('p1', png))
 		expect(e.getStatus()).toBe(413)
 		expect(e.message).toBe('Превышен объём фото местности')
 		expect(photoModel.aggregate.mock.calls[0][0][0]).toEqual({ $match: { company: 'c1', token: { $ne: 'old' } } })
-		expect(photoModel.create).not.toHaveBeenCalled()
+		const token = photoModel.create.mock.calls[0][0].token
+		expect(photoModel.create.mock.invocationCallOrder[0]).toBeLessThan(photoModel.aggregate.mock.invocationCallOrder[0])
+		expect(photoModel.deleteOne).toHaveBeenCalledWith({ token })
+		expect(productModel.findByIdAndUpdate).not.toHaveBeenCalled()
+	})
+
+	it('two uploads at once near the quota: the second sees the first and is rolled back', async () => {
+		const { service, photoModel } = makePhotoService({ product: { company: 'c1' }, usedBytes: QUOTA - png.length })
+		const results = await Promise.allSettled([service.setPhoto('p1', png), service.setPhoto('p1', png)])
+		// у товара не было фото: удаления — только откаты; осталось не больше одной картинки
+		expect(results.filter((r) => r.status === 'rejected').length).toBe(photoModel.deleteOne.mock.calls.length)
+		expect(photoModel.create.mock.calls.length - photoModel.deleteOne.mock.calls.length).toBeLessThanOrEqual(1)
+		expect(photoModel.deleteOne.mock.calls.length).toBeGreaterThanOrEqual(1)
 	})
 
 	it('exactly at the quota is still accepted', async () => {
 		const { service, photoModel } = makePhotoService({ product: { company: 'c1' }, usedBytes: QUOTA - png.length })
 		await service.setPhoto('p1', png)
 		expect(photoModel.create).toHaveBeenCalledTimes(1)
+		expect(photoModel.deleteOne).not.toHaveBeenCalled()
 	})
 
 	it('only a product that is not deleted can get a photo', async () => {

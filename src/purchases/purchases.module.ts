@@ -9,6 +9,7 @@ import { AuthModule } from 'src/auth/auth.module'
 import { ChangeHistoryModule } from 'src/change-history/change-history.module'
 import { Message } from 'src/database/messages.model'
 import { Inventory } from 'src/inventory/inventory.model'
+import { LitnaOrder } from 'src/litna/litna.model'
 import { ProductsModule } from 'src/products/products.module'
 import { Role } from 'src/roles/role.model'
 import { Purchase } from './purchase.model'
@@ -37,6 +38,8 @@ import { PurchasesService } from './purchases.service'
 				},
 			},
 			{ typegooseClass: Message, schemaOptions: { collection: 'Message' } },
+			// есть ли у закупки заказ на lit-na.ru: такую не удаляют и не оплачивают обычным путём
+			LitnaOrder,
 		]),
 		AuthModule,
 		forwardRef(() => ChangeHistoryModule),

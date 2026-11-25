@@ -70,6 +70,11 @@ export class UsageQueryDto {
 	@IsIn(['1'])
 	all?: string
 
+	/** Последние 24 часа по часовым записям: from, to и all не нужны */
+	@IsOptional()
+	@IsIn(['24'])
+	hours?: string
+
 	@IsOptional()
 	@Matches(/^\d{4}-\d\d-\d\d$/)
 	from?: string

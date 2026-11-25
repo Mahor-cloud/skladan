@@ -19,9 +19,11 @@ import { CounterModule } from './common/counters/counter.module'
 import { TenantContextInterceptor } from './common/tenant-context/tenant-context.interceptor'
 import { TenantContextModule } from './common/tenant-context/tenant-context.module'
 import { DatabaseModule } from './database/database.module'
+import { FeedbackModule } from './feedback/feedback.module'
 import { HealthModule } from './health/health.module'
 import { initializeDatabase } from './initialize'
 import { InventoryModule } from './inventory/inventory.module'
+import { LitnaModule } from './litna/litna.module'
 import { ObservabilityModule } from './observability/observability.module'
 import { OrdersModule } from './orders/orders.module'
 import { ProductsModule } from './products/products.module'
@@ -60,6 +62,8 @@ import { UsageModule } from './usage/usage.module'
 		HealthModule,
 		ObservabilityModule,
 		UsageModule,
+		LitnaModule,
+		FeedbackModule,
 	],
 	providers: [
 		{

@@ -36,6 +36,10 @@ export class SeedProductTemplate {
 	// ключ картинки в SeedPhotos; новой местности достаётся своя копия
 	@prop()
 	photo?: string
+
+	// товар на lit-na.ru (как Product.litnaId): копируется в товары новой местности
+	@prop()
+	litnaId?: number | null
 }
 
 @modelOptions({

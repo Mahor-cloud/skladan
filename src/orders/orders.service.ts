@@ -32,7 +32,7 @@ import { Order } from './order.model'
 // Ключ попытки оформления заказа: случайная строка от клиента
 const ORDER_KEY = /^[A-Za-z0-9-]{8,64}$/
 
-// Сколько заказчик уже внёс: сумма, подтверждённая казначеем (может быть и нулём — признак подтверждения событие,
+// Сколько заказчик уже внёс: подтверждённая сумма (может быть и нулём — признак подтверждения событие,
 // а не paidAmount > 0); до первого подтверждения — та, на которую он отметил оплату (событие paid), а не сумма заказа
 // после прошлой правки. У старых заказов без событий — сумма заказа.
 export function committedAmount(order: Pick<Order, 'paidAmount' | 'totalAmount' | 'paymentEvents'>): number {
@@ -345,7 +345,7 @@ export class OrdersService {
 		}
 		if (updateOrderDto.isCompleted === true && !oldOrder.confirmedPaid && updateOrderDto.confirmedPaid !== true) {
 			throw new BadRequestException(
-				'Нельзя завершить заказ до подтверждения оплаты казначеем'
+				'Нельзя завершить заказ до подтверждения оплаты'
 			)
 		}
 		if (updateOrderDto.isPaid === false && oldOrder.isPaid) {
@@ -360,7 +360,7 @@ export class OrdersService {
 
 		if (itemsChanged && oldOrder.isPaid && updateOrderDto.isCompleted === true) {
 			throw new BadRequestException(
-				'Нельзя завершить заказ тем же запросом, что меняет его позиции: новую сумму сначала подтверждает казначей'
+				'Нельзя завершить заказ тем же запросом, что меняет его позиции: новую сумму сначала нужно подтвердить'
 			)
 		}
 
@@ -483,7 +483,7 @@ export class OrdersService {
 				amount: newTotalAmount,
 				by: currentUser._id,
 				at: Date.now(),
-				note: `Казначей подтвердил оплату на сумму ${newTotalAmount} руб`,
+				note: `Оплата подтверждена на сумму ${newTotalAmount} руб`,
 			})
 			patch.paidAmount = newTotalAmount
 		}

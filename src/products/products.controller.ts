@@ -26,7 +26,7 @@ import { IdValidationPipe } from 'src/pipes/id.validation.pipe'
 import { CreateProductDto } from './dto/create-product.dto'
 import { KindCoverDto, RenameKindDto } from './dto/kinds.dto'
 import { UpdateProductDto } from './dto/update-product.dto'
-import { ProductsService } from './products.service'
+import { PHOTO_UPLOAD, ProductsService } from './products.service'
 
 @Controller('products')
 export class ProductsController {
@@ -82,8 +82,7 @@ export class ProductsController {
 	@Put(':id/photo')
 	@Auth('admin', ['edit_products'])
 	@UsePipes(IdValidationPipe)
-	// +1 у fileSize и parts: busboy срабатывает, когда счёт достиг лимита, а 512 КБ ровно и одна часть — допустимы
-	@UseInterceptors(FileInterceptor('file', { limits: { fileSize: 512 * 1024 + 1, files: 1, fields: 0, parts: 2 } }))
+	@UseInterceptors(FileInterceptor('file', PHOTO_UPLOAD))
 	setPhoto(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
 		return this.productsService.setPhoto(id, file?.buffer)
 	}

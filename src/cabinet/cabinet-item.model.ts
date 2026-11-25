@@ -51,6 +51,16 @@ export class CabinetItem {
 	@prop({ default: '' })
 	note?: string
 
+	// Обложка своей позиции (у позиции со склада — обложка товара): тип рисунка, как у вида, цвет #RRGGBB и ключ картинки в ProductPhotos
+	@prop()
+	cover?: string
+
+	@prop()
+	coverColor?: string
+
+	@prop()
+	photo?: string
+
 	@prop({ default: 0 })
 	position?: number
 

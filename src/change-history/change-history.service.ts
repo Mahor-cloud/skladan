@@ -44,13 +44,20 @@ export const EVENT_LABELS_RU: Record<string, string> = {
 	'role-created': 'Роль создана',
 	'role-updated': 'Роль обновлена',
 	'role-deleted': 'Роль удалена',
+	'litna-account-updated': 'Аккаунт lit-na.ru изменён',
+	'litna-released': 'Оформление на lit-na.ru снято',
+	'litna-links-updated': 'Привязка к lit-na.ru изменена',
+	'litna-paid-after-cancel': 'Заказ lit-na.ru оплачен после отмены',
+	'litna-detached': 'Закупка отвязана от lit-na.ru',
+	'litna-shipped': 'Заказ lit-na.ru отправлен',
+	'litna-cancelled-after-paid': 'Заказ lit-na.ru отменён после оплаты',
 }
 
 function categoryForChangeType(changeType: string): SubscriptionCategory {
 	if (changeType === 'order-surcharge-pending' || changeType === 'order-refund-pending')
 		return 'payment'
 	if (changeType.startsWith('order-')) return 'orders'
-	if (changeType.startsWith('purchase-')) return 'purchases'
+	if (changeType.startsWith('purchase-') || changeType.startsWith('litna-')) return 'purchases'
 	if (changeType.startsWith('inventory-')) return 'inventory'
 	if (changeType.startsWith('product-')) return 'products'
 	if (changeType.startsWith('user-')) return 'users'
@@ -165,8 +172,10 @@ export class ChangeHistoryService {
 		return { matched: result.matchedCount, modified: result.modifiedCount, preferences }
 	}
 
+	/** push: false — только в историю (и realtime), без уведомлений подписчикам: например, настройки, а не события */
 	async createChangeHistory(
-		createChangeHistoryDto: CreateChangeHistoryDto
+		createChangeHistoryDto: CreateChangeHistoryDto,
+		opts: { push?: boolean } = {}
 	): Promise<ChangeHistory> {
 		const ctx = getTenantContext()
 		const companyForHistory = (createChangeHistoryDto as any).company || ctx?.company || null
@@ -180,7 +189,7 @@ export class ChangeHistoryService {
 		const pushCompany = companyForHistory
 			? new Types.ObjectId(String(companyForHistory))
 			: null
-		if (pushCompany) {
+		if (pushCompany && opts.push !== false) {
 			this.schedulePush(
 				createChangeHistoryDto.changeType,
 				createChangeHistoryDto.description,

@@ -22,7 +22,7 @@ async function makeService(user: any) {
 	}
 	const companyModel: any = { findById: jest.fn() }
 	const jwt: any = { verifyAsync: jest.fn(async () => ({ _id: 'u1' })), signAsync: jest.fn(async () => 'signed') }
-	const service = new AuthService(userModel, companyModel, jwt, {} as any)
+	const service = new AuthService(userModel, companyModel, jwt, {} as any, {} as any)
 	return { service, jwt }
 }
 
@@ -78,11 +78,47 @@ describe('login of a deleted user', () => {
 describe('remove', () => {
 	it('answers with the same fields as a user edit: no password or refresh token hash', async () => {
 		const removed = { _id: 'u2', login: 'gone', password: '$2a$12$hash', refreshToken: 'sha', role: 'r1', isAdmin: false, company: 'c1', name: 'Ушёл', deletedAt: 1 }
-		const userModel: any = { findByIdAndUpdate: jest.fn(() => ({ exec: async () => removed })) }
+		const userModel: any = { findById: () => ({ exec: async () => removed }), findByIdAndUpdate: jest.fn(() => ({ exec: async () => removed })) }
 		const history: any = { createChangeHistory: jest.fn(async () => ({})) }
-		const service = new AuthService(userModel, {} as any, {} as any, history)
+		const service = new AuthService(userModel, {} as any, {} as any, history, { exists: () => ({ exec: async () => null }) } as any)
 		const res = await service.remove('u2', { _id: 'u1' } as any)
 		expect(res).toEqual({ _id: 'u2', login: 'gone', role: 'r1', isAdmin: false, isSuperAdmin: false, company: 'c1', name: 'Ушёл' })
+	})
+})
+
+describe('системная роль и галочка «Служащий»', () => {
+	// роль 'rs' — системная; у пользователя 'u1' она и стоит
+	const roles: any = { exists: (f: any) => ({ exec: async () => (f._id === 'rs' ? { _id: 'rs' } : null) }) }
+	const stored = (id: string, isAdmin: boolean) => ({ _id: id, login: 'x', name: 'Имя', role: id === 'u1' ? 'rs' : 'r2', isAdmin, company: 'c1' })
+	const make = (id: string, isAdmin: boolean) => {
+		const userModel: any = {
+			findOne: () => ({ setOptions: async () => null }),
+			findById: () => ({ exec: async () => stored(id, isAdmin) }),
+			findByIdAndUpdate: (_: any, u: any) => ({ exec: async () => ({ ...stored(id, isAdmin), ...u.$set }) }),
+		}
+		return new AuthService(userModel, {} as any, {} as any, { createChangeHistory: async () => ({}) } as any, roles)
+	}
+	const chairman: any = { _id: 'u1', isAdmin: true, role: { isSystem: true } }
+	const staff: any = { _id: 'u3', isAdmin: true, role: { isSystem: false, permissions: ['create_users', 'edit_users', 'delete_users'] } }
+	const superAdmin: any = { _id: 's', isSuperAdmin: true }
+
+	it('галочку меняет председатель своей местности и супер-админ; служащий с правом — нет; у председателя её не снять', async () => {
+		expect((await make('u2', false).update('u2', { isAdmin: true } as any, chairman)).isAdmin).toBe(true)
+		expect((await make('u2', true).update('u2', { isAdmin: false } as any, chairman)).isAdmin).toBe(false)
+		expect((await make('u2', false).update('u2', { isAdmin: true } as any, superAdmin)).isAdmin).toBe(true)
+		await expect(make('u2', false).update('u2', { isAdmin: true } as any, staff)).rejects.toThrow('может председатель')
+		await expect(make('u1', true).update('u1', { isAdmin: false } as any, chairman)).rejects.toThrow('снять нельзя')
+	})
+
+	it('служащий с правом править пользователей не назначает системную роль и не трогает председателя', async () => {
+		const text = 'меняет только председатель'
+		await expect(make('u3', true).update('u3', { role: 'rs' } as any, staff)).rejects.toThrow(text)
+		await expect(make('u1', true).update('u1', { password: 'новый-пароль' } as any, staff)).rejects.toThrow(text)
+		await expect(make('u1', true).remove('u1', staff)).rejects.toThrow(text)
+		await expect(make('u2', false).createUser({ login: 'n', password: 'p', name: 'Н', role: 'rs' } as any, staff)).rejects.toThrow(text)
+		// обычная правка обычного пользователя и то же самое от председателя — проходят
+		expect((await make('u2', false).update('u2', { name: 'Новое' } as any, staff)).name).toBe('Новое')
+		expect((await make('u2', false).update('u2', { role: 'rs' } as any, chairman)).role).toBe('rs')
 	})
 })
 

@@ -18,6 +18,7 @@ import { keptPrices, linesSum, priceLines } from 'src/common/line-prices'
 import { Message } from 'src/database/messages.model'
 import { assertStockNotFrozen, openDocsAllowed } from 'src/inventory/inventory-lock'
 import { Inventory } from 'src/inventory/inventory.model'
+import { LitnaOrder } from 'src/litna/litna.model'
 import { Product } from 'src/products/product.model'
 import { ProductsService } from 'src/products/products.service'
 import { Role } from 'src/roles/role.model'
@@ -27,6 +28,12 @@ import { Purchase } from './purchase.model'
 type ReceiptState = { isCompleted?: boolean; partialCompleted?: boolean; items?: { product: any; confirmedQuantity?: number }[] }
 
 // Does this update receive goods, i.e. move Product.quantity ($inc in update)? Frozen while an inventory is open.
+/** Без галочки «Служащий» человек меняет только закупки, которые создал сам, — как в заказах; служащий и председатель — все */
+export function assertOwnPurchase(purchase: { user?: any }, user: UserModel) {
+	if (user.isAdmin || (user.role as any)?.isSystem === true) return
+	if (String(purchase.user?._id ?? purchase.user) !== String(user._id)) throw new ForbiddenException('Чужую закупку меняет только служащий')
+}
+
 export function purchaseReceives(old: ReceiptState, dto: ReceiptState): boolean {
 	const finalPartial = dto.partialCompleted !== undefined ? !!dto.partialCompleted : !!old.partialCompleted
 	const finalCompleted = dto.isCompleted !== undefined ? !!dto.isCompleted : !!old.isCompleted
@@ -47,7 +54,8 @@ export class PurchasesService {
 		@InjectModel(Inventory) private readonly inventoryModel: ModelType<Inventory>,
 		@InjectModel(Message) private readonly messageModel: ModelType<Message>,
 		private readonly productsService: ProductsService,
-		private readonly counterService: CounterService
+		private readonly counterService: CounterService,
+		@InjectModel(LitnaOrder) private readonly litnaOrderModel: ModelType<LitnaOrder>
 	) {}
 
 	private purchaseItemsEqual(a: any[] = [], b: any[] = []): boolean {
@@ -136,10 +144,12 @@ export class PurchasesService {
 		return purchase
 	}
 
+	/** bySite — вызов из src/litna: создание и оплату закупки с заказом на lit-na.ru ставит он, а не человек */
 	async update(
 		id: string,
 		updatePurchaseDto: UpdatePurchaseDto,
-		currentUser: UserModel
+		currentUser: UserModel,
+		bySite = false
 	): Promise<Purchase> {
 		const oldPurchase = await this.purchaseModel.findById(id).exec()
 		if (!oldPurchase) throw new NotFoundException('Закупка не найдена')
@@ -163,18 +173,37 @@ export class PurchasesService {
 			: null
 		const userPerms = userRole?.permissions || []
 		const isMainAdmin = userRole?.isSystem === true
+		if (!bySite && !isMainAdmin) assertOwnPurchase(oldPurchase, currentUser)
 		const canExceedTarget = isMainAdmin || userPerms.includes('approve_target_exceed')
 
 		const canApprovePayment =
 			isMainAdmin || userPerms.includes('approve-payment')
-		if (
-			updatePurchaseDto.isPaid === true &&
-			!oldPurchase.isPaid &&
-			!canApprovePayment
-		) {
-			throw new ForbiddenException(
-				'Оплату закупки подтверждает казначей — у вас нет такого права'
-			)
+		const paying = updatePurchaseDto.isPaid === true && !oldPurchase.isPaid
+		if (oldPurchase.litna && !bySite) {
+			if (!oldPurchase.isCreated && updatePurchaseDto.isCreated === true) {
+				throw new BadRequestException('Заказ на lit-na.ru ещё оформляется')
+			}
+			// без записи заказа (местность перенесли с другого сервера) проверить оплату на сайте нечем — отмечают вручную
+			if (paying && (await this.litnaOrderModel.exists({ purchase: oldPurchase._id, deletedAt: null }).exec())) {
+				throw new BadRequestException('Оплата этой закупки отмечается сама после оплаты на lit-na.ru')
+			}
+		}
+		if (paying && !canApprovePayment && !bySite) {
+			throw new ForbiddenException('Нет права подтверждать оплату')
+		}
+		// Право подтверждать оплату ставит только оплату: создание — с правом создавать или править закупки, приёмка и завершение — править
+		const canEditPurchases = isMainAdmin || userPerms.includes('edit_purchases')
+		if (!bySite) {
+			const creating = updatePurchaseDto.isCreated === true && !oldPurchase.isCreated
+			if (creating && !canEditPurchases && !userPerms.includes('create_purchases')) {
+				throw new ForbiddenException('Нет права создавать закупки')
+			}
+			const receiving =
+				updatePurchaseDto.isCompleted === true ||
+				(typeof updatePurchaseDto.partialCompleted === 'boolean' && updatePurchaseDto.partialCompleted !== !!oldPurchase.partialCompleted)
+			if (receiving && !canEditPurchases) {
+				throw new ForbiddenException('Приёмка и завершение закупки — с правом редактирования закупок')
+			}
 		}
 		{
 			const finalPartial =
@@ -208,13 +237,17 @@ export class PurchasesService {
 			if ((oldPurchase.items || []).some((i: any) => (i.confirmedQuantity || 0) > 0 && !sent.has(String(i.product)))) {
 				throw new BadRequestException('Закупка уже изменилась — обновите страницу')
 			}
+			// Заказ на сайте уже оформлен этим составом: менять можно только принятое
+			const ordered = (items: any[]) =>
+				(items || []).filter((i) => i.quantity > 0).map((i) => `${String(i.product).toLowerCase()}:${i.quantity}`).sort().join()
+			if (oldPurchase.litna && ordered(oldPurchase.items) !== ordered(updatePurchaseDto.items)) {
+				throw new BadRequestException('Заказ на lit-na.ru уже оформлен — состав закупки менять нельзя')
+			}
 			const itemsChanged = !this.purchaseItemsEqual(
 				oldPurchase.items as any[],
 				updatePurchaseDto.items as any[]
 			)
 			if (itemsChanged) {
-				const canEditPurchases =
-					isMainAdmin || userPerms.includes('edit_purchases')
 				if (!canEditPurchases) {
 					throw new ForbiddenException(
 						'Изменение позиций закупки доступно только с правом редактирования закупок'
@@ -241,9 +274,10 @@ export class PurchasesService {
 			const productById = new Map(products.map((p) => [String(p._id), p]))
 			// Цены строк записываются вместе с суммами. После оплаты они зафиксированы: товар, который уже был в закупке,
 			// остаётся по своей цене (приёмка её не меняет), по текущей идут только добавленные. До оплаты всё по текущим.
+			// У закупки с заказом на lit-na.ru цены сайта записаны при заказе — они и остаются.
 			patch.items = priceLines(
 				updatePurchaseDto.items.map((item) => ({ product: item.product, quantity: item.quantity, confirmedQuantity: item.confirmedQuantity ?? 0 })),
-				oldPurchase.isPaid ? keptPrices(oldPurchase.items) : new Map(),
+				oldPurchase.isPaid || oldPurchase.litna ? keptPrices(oldPurchase.items) : new Map(),
 				(id) => productById.get(id)?.price || 0
 			)
 			patch.totalAmount = linesSum(patch.items)
@@ -271,9 +305,11 @@ export class PurchasesService {
 				}
 			}
 		}
+		// Оплату с сайта отмечает тот, кто первым переключил флаг: при двух проверках сразу история и push — один раз
 		const updatedPurchase = await this.purchaseModel
-			.findByIdAndUpdate(id, patch, { new: true })
+			.findOneAndUpdate(bySite && paying ? { _id: id, isPaid: { $ne: true } } : { _id: id }, patch, { new: true })
 			.exec()
+		if (!updatedPurchase && bySite && paying) return this.purchaseModel.findById(id).exec()
 		if (!updatedPurchase) throw new NotFoundException('Закупка не найдена')
 
 		if (updatedPurchase.partialCompleted || updatedPurchase.isCompleted) {
@@ -315,9 +351,63 @@ export class PurchasesService {
 			.exec()
 	}
 
-	async remove(id: string, currentUser: UserModel): Promise<Purchase> {
+	/**
+	 * Снова черновик (src/litna: заказ на сайте отменён или его нет): только созданная, неоплаченная и без принятого.
+	 * Цены строк — нынешние, как у любого черновика; litna снимается. null — такую не трогаем.
+	 */
+	async toDraft(id: string, currentUser: UserModel, description: string): Promise<Purchase | null> {
+		const purchase = await this.purchaseModel.findById(id).exec()
+		const received = (purchase?.items || []).some((i: any) => (i.confirmedQuantity || 0) > 0)
+		if (!purchase?.isCreated || purchase.isPaid || purchase.isCompleted || purchase.partialCompleted || received) return null
+		const ids = purchase.items.map((i: any) => String(i.product))
+		// как в createPurchase: в черновике — все товары местности (недостающие с нулём), чтобы добавить можно было любой
+		const catalog = await this.productModel.find({ $or: [{ _id: { $in: ids } }, { deletedAt: null }] }).exec()
+		const prices = new Map(catalog.map((p) => [String(p._id), p.price]))
+		const lines = purchase.items.map((i: any) => ({ product: String(i.product), quantity: i.quantity, confirmedQuantity: 0 }))
+		const missing = catalog.filter((p) => !p.deletedAt && !ids.includes(String(p._id))).map((p) => ({ product: String(p._id), quantity: 0, confirmedQuantity: 0 }))
+		const items = priceLines([...lines, ...missing], new Map(), (pid) => prices.get(pid) || 0)
+		const draft = await this.purchaseModel
+			.findOneAndUpdate(
+				{ _id: id, isCreated: true, isPaid: { $ne: true } },
+				{ isCreated: false, items, totalAmount: linesSum(items), totalConfirmedAmount: 0, $unset: { litna: 1 } },
+				{ new: true }
+			)
+			.exec()
+		if (!draft) return null
+		await this.changeHistoryService.createChangeHistory({ user: currentUser._id, changeType: 'purchase-updated', description, changeDate: Date.now() })
+		return draft
+	}
+
+	/** «В черновик» у созданной вручную закупки: снова выбрать «Вручную» или lit-na.ru */
+	async backToDraft(id: string, currentUser: UserModel): Promise<Purchase> {
+		const purchase = await this.purchaseModel.findById(id).exec()
+		if (!purchase) throw new NotFoundException('Закупка не найдена')
+		assertOwnPurchase(purchase, currentUser)
+		if (!purchase.isCreated) throw new BadRequestException('Закупка уже черновик')
+		if (purchase.isPaid) throw new BadRequestException('Закупка уже оплачена')
+		if (purchase.isCompleted || purchase.partialCompleted || purchase.items.some((i: any) => (i.confirmedQuantity || 0) > 0)) {
+			throw new BadRequestException('По закупке уже принимали товар')
+		}
+		// заказ сайта снимается только через src/litna: иначе он остался бы на сайте без закупки
+		if (purchase.litna || (await this.litnaOrderModel.exists({ purchase: purchase._id, deletedAt: null }).exec())) {
+			throw new BadRequestException('Сначала отвяжите закупку от lit-na.ru')
+		}
+		const draft = await this.toDraft(id, currentUser, `Закупка №${purchase.purchaseNumber} возвращена в черновик`)
+		// между проверкой и записью закупку успели оплатить или вернуть
+		if (!draft) throw new BadRequestException('Закупка уже изменилась — обновите страницу')
+		return draft
+	}
+
+	/** bySite — вызов из src/litna: он сначала отменяет заказ на сайте */
+	async remove(id: string, currentUser: UserModel, bySite = false): Promise<Purchase> {
 		const purchaseToRemove = await this.purchaseModel.findById(id).exec()
 		if (!purchaseToRemove) throw new NotFoundException('Закупка не найдена')
+		if (!bySite) assertOwnPurchase(purchaseToRemove, currentUser)
+
+		// иначе заказ на сайте остался бы неотменённым (в том числе черновик, по которому заказ сейчас оформляется)
+		if (!bySite && (purchaseToRemove.litna || (await this.litnaOrderModel.exists({ purchase: purchaseToRemove._id, deletedAt: null }).exec()))) {
+			throw new BadRequestException('У закупки есть заказ на lit-na.ru — удаление отменяет и его, удалите её из закупки lit-na.ru')
+		}
 
 		if (purchaseToRemove.isCompleted) {
 			throw new BadRequestException('Закупка уже завершена, нельзя удалить')

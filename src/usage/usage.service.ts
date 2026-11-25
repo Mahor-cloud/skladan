@@ -9,10 +9,11 @@ import { createHash } from 'crypto'
 import { Types } from 'mongoose'
 import { InjectModel } from 'nestjs-typegoose'
 import { UsageBatchDto, UsageQueryDto } from './dto/usage.dto'
-import { UsageMonth, UsageRole, UsageStat } from './usage.model'
+import { UsageHour, UsageMonth, UsageRole, UsageStat } from './usage.model'
 
 const MSK = 3 * 3600 * 1000
-const DAY = 24 * 3600 * 1000
+const HOUR = 3600 * 1000
+const DAY = 24 * HOUR
 /**
  * До стольких дней сводка считается по подробным записям и график идёт по дням; дольше — по месячным итогам.
  * Подробных записей за 90 дней при 190 пользователях — около четверти миллиона: считать их на боевом сервере слишком долго.
@@ -28,6 +29,9 @@ const dayStart = (day: string) => new Date(`${day}T00:00:00.000Z`)
 /** День по Москве (обе нынешние местности в этом поясе): запись, пришедшая после полуночи, относится к новому дню. */
 export const mskDay = (now = Date.now()) =>
 	new Date(now + MSK).toISOString().slice(0, 10)
+/** Час по Москве, ГГГГ-ММ-ДДTЧЧ. Сдвиг пояса — целые часы, поэтому час по Москве начинается вместе с часом UTC. */
+export const mskHour = (now = Date.now()) =>
+	new Date(now + MSK).toISOString().slice(0, 13)
 /** Месяц на n месяцев раньше: ('2026-02', 6) → '2025-08'. */
 export const monthBack = (month: string, n: number) => {
 	const total = +month.slice(0, 4) * 12 + (+month.slice(5, 7) - 1) - n
@@ -35,7 +39,8 @@ export const monthBack = (month: string, n: number) => {
 }
 
 /**
- * Пачка счётчиков пользователя → операции для базы: daily — подробные записи по дням, monthly — месячные итоги
+ * Пачка счётчиков пользователя → операции для базы: daily — подробные записи по дням, hourly — те же записи по часам
+ * (для сводки за 24 часа), monthly — месячные итоги
  * (по строке на элемент и одна строка самого пользователя), role — снимок прав его роли (или null, если роли нет).
  * Супер-админ и пользователь без местности не учитываются.
  * Одинаковые строки складываются в базе сами ($inc), время самого долгого посещения — через $max.
@@ -45,6 +50,7 @@ export const monthBack = (month: string, n: number) => {
 export function usageOps(user: any, dto: UsageBatchDto, now = Date.now()) {
 	const none = {
 		daily: [] as any[],
+		hourly: [] as any[],
 		monthly: [] as any[],
 		role: null as null | { roleId: string; key: string; op: any },
 	}
@@ -64,26 +70,33 @@ export function usageOps(user: any, dto: UsageBatchDto, now = Date.now()) {
 	const role = String(r?.name || '')
 	const staff = !!user.isAdmin
 
-	const daily = events.map((e) => ({
-		updateOne: {
-			filter: {
-				company,
-				day,
-				user: id,
-				device: dto.device,
-				screen: e.s,
-				kind: e.k,
-				label: e.l,
+	// when — день или час записи (ключ), at — его начало датой
+	const rows = (when: Record<string, string>, at: Date) =>
+		events.map((e) => ({
+			updateOne: {
+				filter: {
+					company,
+					...when,
+					user: id,
+					device: dto.device,
+					screen: e.s,
+					kind: e.k,
+					label: e.l,
+				},
+				update: {
+					$inc: { count: e.n, ms: e.ms || 0 },
+					$max: { maxMs: e.max || 0 },
+					$set: { role, roleId, staff },
+					$setOnInsert: { at },
+				},
+				upsert: true,
 			},
-			update: {
-				$inc: { count: e.n, ms: e.ms || 0 },
-				$max: { maxMs: e.max || 0 },
-				$set: { role, roleId, staff },
-				$setOnInsert: { at: dayStart(day) },
-			},
-			upsert: true,
-		},
-	}))
+		}))
+	const daily = rows({ day }, dayStart(day))
+	const hourly = rows(
+		{ hour: mskHour(now) },
+		new Date(Math.floor(now / HOUR) * HOUR)
+	)
 
 	const sum = (kind: string, field: 'n' | 'ms') =>
 		events.filter((e) => e.k === kind).reduce((s, e) => s + (e[field] || 0), 0)
@@ -134,7 +147,7 @@ export function usageOps(user: any, dto: UsageBatchDto, now = Date.now()) {
 		},
 	})
 
-	if (!roleId) return { daily, monthly, role: null }
+	if (!roleId) return { daily, hourly, monthly, role: null }
 	// Снимок прав роли: новая запись, только когда меняется название или состав прав; иначе продлевается срок открытой
 	const permissions = [...(r.permissions || [])].map(String).sort()
 	const key = createHash('sha1')
@@ -157,7 +170,7 @@ export function usageOps(user: any, dto: UsageBatchDto, now = Date.now()) {
 			upsert: true,
 		},
 	}
-	return { daily, monthly, role: { roleId: String(roleId), key, op } }
+	return { daily, hourly, monthly, role: { roleId: String(roleId), key, op } }
 }
 
 const size = (field: any) => ({ $size: field })
@@ -191,7 +204,8 @@ export class UsageService {
 	constructor(
 		@InjectModel(UsageStat) private readonly model: ModelType<UsageStat>,
 		@InjectModel(UsageMonth) private readonly months: ModelType<UsageMonth>,
-		@InjectModel(UsageRole) private readonly roles: ModelType<UsageRole>
+		@InjectModel(UsageRole) private readonly roles: ModelType<UsageRole>,
+		@InjectModel(UsageHour) private readonly hours: ModelType<UsageHour>
 	) {}
 
 	/**
@@ -207,7 +221,7 @@ export class UsageService {
 	 * прислал бы пачку снова, и в коллекции, где запись уже прошла, числа удвоились бы.
 	 */
 	async record(user: any, dto: UsageBatchDto): Promise<void> {
-		const { daily, monthly, role } = usageOps(user, dto)
+		const { daily, hourly, monthly, role } = usageOps(user, dto)
 		if (!daily.length) return
 		const day = mskDay()
 		if (day !== this.today) {
@@ -215,11 +229,13 @@ export class UsageService {
 			this.rolesToday.clear()
 			this.today = day
 		}
+		// Предел общий для подробных и часовых записей: строк по часам за день от человека столько же, сколько по дню
 		const seen = this.accepted.get(String(user._id)) || 0
 		if (seen >= USAGE_ROWS_PER_DAY) return
 		this.accepted.set(String(user._id), seen + daily.length)
 		const writes = [
 			this.write(this.model, daily),
+			this.write(this.hours, hourly),
 			this.write(this.months, monthly),
 		]
 		if (role && this.rolesToday.get(role.roleId) !== role.key)
@@ -262,17 +278,22 @@ export class UsageService {
 	}
 
 	/**
-	 * Сводка для страницы супер-админа. Период — дни по Москве включительно; без дат — последние 30 дней; all — от первой записи.
+	 * Сводка для страницы супер-админа. Период — дни по Москве включительно; без дат — последние 30 дней; all — от первой записи;
+	 * hours — последние 24 часа: нынешний час и 23 перед ним, по часовым записям (from и to в ответе — часы ГГГГ-ММ-ДДTЧЧ).
 	 * Короткий период и отбор одного человека считаются по подробным записям, длинный — по месячным итогам (целыми месяцами).
 	 */
-	async summary(q: UsageQueryDto) {
+	async summary(q: UsageQueryDto, now = Date.now()) {
 		const scope: Record<string, any> = {}
 		if (q.company) scope.company = new Types.ObjectId(q.company)
 		const inCompany = { ...scope }
 		if (q.device) scope.device = q.device
-		const to = q.all ? mskDay() : q.to || mskDay()
-		let from = q.from || mskDay(Date.parse(`${to}T00:00:00Z`) - 29 * DAY - MSK)
-		if (q.all)
+		// Начало первого из 24 часов; дни from и to нужны и здесь — для прав ролей и «не нажимали»
+		const since = q.hours ? (Math.floor(now / HOUR) - 23) * HOUR : 0
+		const to = q.all || q.hours ? mskDay(now) : q.to || mskDay(now)
+		let from = q.hours
+			? mskDay(since)
+			: q.from || mskDay(Date.parse(`${to}T00:00:00Z`) - 29 * DAY - MSK)
+		if (q.all && !since)
 			from = `${(await this.months.findOne(scope).sort({ month: 1 }).select('month').lean())?.month || to.slice(0, 7)}-01`
 		const byMonth =
 			(Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY >=
@@ -324,7 +345,16 @@ export class UsageService {
 					to.slice(0, 7),
 					!!q.all
 				)
-			: await this.fromDays(scope, roleCond, q.user, from, to, byMonth, !!q.all)
+			: await this.fromDays(
+					scope,
+					roleCond,
+					q.user,
+					from,
+					to,
+					byMonth,
+					!!q.all,
+					since
+				)
 
 		// Роли: строки по номерам → по названиям. Одноимённые складываются; люди считаются без повторов
 		// (человек мог сменить роль, роль могли удалить и создать заново).
@@ -398,9 +428,9 @@ export class UsageService {
 			.sort({ name: 1 })
 			.toArray()
 		return {
-			from,
-			to,
-			by: byMonth ? 'month' : 'day',
+			from: since ? mskHour(since) : from,
+			to: since ? mskHour(now) : to,
+			by: since ? 'hour' : byMonth ? 'month' : 'day',
 			companies: companies.map((c: any) => ({
 				_id: String(c._id),
 				name: c.name,
@@ -425,7 +455,10 @@ export class UsageService {
 		}
 	}
 
-	/** Сводка по подробным записям. Роль в ответе — её номер; названия подставляет summary. */
+	/**
+	 * Сводка по подробным записям. Роль в ответе — её номер; названия подставляет summary.
+	 * since — начало первого часа: сводка за 24 часа по часовым записям, ряд графика — hours, у людей days — число часов с заходом.
+	 */
 	private async fromDays(
 		scope: Record<string, any>,
 		roleCond: Record<string, any>,
@@ -433,16 +466,21 @@ export class UsageService {
 		from: string,
 		to: string,
 		byMonth: boolean,
-		all: boolean
+		all: boolean,
+		since = 0
 	) {
 		const who: Record<string, any> = { ...roleCond }
 		if (user) who.user = new Types.ObjectId(user)
 		const narrowed = !!user || !!Object.keys(roleCond).length
-		// at — начало дня записи: условие по нему идёт по индексу, без него сводка читала бы всю коллекцию
-		const period = {
-			day: { $gte: from, $lte: to },
-			at: { $gte: dayStart(from), $lte: dayStart(to) },
-		}
+		const src: ModelType<any> = since ? this.hours : this.model
+		const unit = since ? 'hour' : 'day'
+		// at — начало дня (часа) записи: условие по нему идёт по индексу, без него сводка читала бы всю коллекцию
+		const period = since
+			? { at: { $gte: new Date(since) } }
+			: {
+					day: { $gte: from, $lte: to },
+					at: { $gte: dayStart(from), $lte: dayStart(to) },
+				}
 		const totals = {
 			opens: when('open', '$count'),
 			clicks: when('click', '$count'),
@@ -471,17 +509,18 @@ export class UsageService {
 			},
 		]
 
-		const [f] = await this.model
+		const [f] = await src
 			.aggregate([
 				{ $match: { ...scope, ...who, ...period } },
 				{
 					$facet: {
+						// ряд графика: по дням или, за 24 часа, по часам
 						days: byMonth
 							? none
 							: [
 									{
 										$group: {
-											_id: '$day',
+											_id: `$${unit}`,
 											users: { $addToSet: '$user' },
 											...totals,
 										},
@@ -489,14 +528,14 @@ export class UsageService {
 									{
 										$project: {
 											_id: 0,
-											day: '$_id',
+											[unit]: '$_id',
 											users: size('$users'),
 											opens: 1,
 											clicks: 1,
 											ms: 1,
 										},
 									},
-									{ $sort: { day: 1 } },
+									{ $sort: { [unit]: 1 } },
 								],
 						months: byMonth
 							? [
@@ -605,9 +644,9 @@ export class UsageService {
 								$group: {
 									_id: '$user',
 									company: { $first: '$company' },
-									last: { $max: { $concat: ['$day', '|', roleStr] } },
-									lastDay: { $max: '$day' },
-									days: { $addToSet: '$day' },
+									last: { $max: { $concat: [`$${unit}`, '|', roleStr] } },
+									lastDay: { $max: `$${unit}` },
+									days: { $addToSet: `$${unit}` },
 									visits: when('view', '$count'),
 									...totals,
 								},
@@ -689,7 +728,12 @@ export class UsageService {
 							lastDay: { $max: '$day' },
 						},
 					},
-					{ $match: { inPeriod: 0 } },
+					// за 24 часа период короче дня: нажатое в эти часы берётся из сводки выше
+					{
+						$match: since
+							? { _id: { $nin: (f?.clicked || []).map((c: any) => c._id) } }
+							: { inPeriod: 0 },
+					},
 					{ $sort: { before: -1 } },
 					{ $limit: 100 },
 					{
@@ -720,12 +764,13 @@ export class UsageService {
 				? f?.roles || []
 				: byMonth
 					? await this.rolesFromMonths(scope, fromMonth, toMonth)
-					: await this.model
+					: await src
 							.aggregate([{ $match: { ...scope, ...period } }, ...byRole])
 							.option(LIMIT)
 
 		return {
-			days: f?.days || [],
+			days: since ? [] : f?.days || [],
+			hours: since ? f?.days || [] : [],
 			months: f?.months || [],
 			screens: f?.screens || [],
 			elements: f?.elements || [],

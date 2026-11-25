@@ -24,6 +24,8 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 export const PHOTO_TOKEN = /^[0-9a-f]{32}$/
 export const PHOTO_QUOTA = 30 * 1024 * 1024
+// Загрузка фото (FileInterceptor): +1 у fileSize и parts — busboy срабатывает, когда счёт достиг лимита, а 512 КБ ровно и одна часть допустимы
+export const PHOTO_UPLOAD = { limits: { fileSize: 512 * 1024 + 1, files: 1, fields: 0, parts: 2 } }
 const MAX_KIND_COVERS = 500
 
 // Тип определяется по первым байтам: заявленному клиентом mimetype верить нельзя
@@ -145,9 +147,10 @@ export class ProductsService {
 		updateProductDto: UpdateProductDto,
 		currentUser: UserModel
 	): Promise<Product> {
-		// Цвет обложки — косметика: без запрета на время инвентаризации, без истории и push, открытые экраны перечитают по realtime
+		// Цвет обложки и пара на lit-na.ru — косметика: без запрета на время инвентаризации, без истории и push,
+		// открытые экраны перечитают по realtime
 		const keys = Object.keys(updateProductDto)
-		const cosmeticOnly = keys.length === 1 && keys[0] === 'coverColor'
+		const cosmeticOnly = keys.length > 0 && keys.every((k) => k === 'coverColor' || k === 'litnaId')
 		if (!cosmeticOnly) await this.assertNoActiveInventory()
 		if ((currentUser.role as any)?.isSystem !== true) {
 			delete (updateProductDto as any).targetQty
@@ -157,6 +160,13 @@ export class ProductsService {
 			.findByIdAndUpdate(id, updateProductDto, { new: true })
 			.exec()
 		if (cosmeticOnly) {
+			// пара на lit-na.ru — в историю (как и массовая привязка), но без push
+			if ('litnaId' in updateProductDto && (oldProduct as any)?.litnaId !== updateProductDto.litnaId) {
+				await this.changeHistoryService.createChangeHistory(
+					{ user: currentUser._id, changeType: 'litna-links-updated', description: 'Привязка к lit-na.ru изменена: 1 товар', changeDate: Date.now() },
+					{ push: false }
+				)
+			}
 			this.emit('product-updated')
 			return updatedProduct
 		}
@@ -212,7 +222,9 @@ export class ProductsService {
 		if (!contentType) throw new BadRequestException('Нужна картинка WebP, PNG или JPEG')
 		const product = await this.productModel.findOne({ _id: id, deletedAt: null }).select('company photo').exec()
 		if (!product) throw new NotFoundException('Товар не найден')
-		// shortcut: две одновременные загрузки у края квоты могут превысить её на одну картинку (до 512 КБ); начнут злоупотреблять — счётчик в местности
+		// сначала запись, потом подсчёт вместе с ней: одновременные загрузки видят друг друга и квоту не превысят
+		const token = randomBytes(16).toString('hex')
+		await this.photoModel.create({ company: product.company, token, contentType, data })
 		const [used] = await this.photoModel
 			.aggregate([
 				// нынешнее фото товара не считается: при замене оно удаляется
@@ -220,9 +232,10 @@ export class ProductsService {
 				{ $group: { _id: null, bytes: { $sum: { $binarySize: '$data' } } } },
 			])
 			.exec()
-		if ((used?.bytes || 0) + data.length > PHOTO_QUOTA) throw new PayloadTooLargeException('Превышен объём фото местности')
-		const token = randomBytes(16).toString('hex')
-		await this.photoModel.create({ company: product.company, token, contentType, data })
+		if ((used?.bytes || 0) > PHOTO_QUOTA) {
+			await this.photoModel.deleteOne({ token }).exec()
+			throw new PayloadTooLargeException('Превышен объём фото местности')
+		}
 		return this.swapPhoto(id, token)
 	}
 

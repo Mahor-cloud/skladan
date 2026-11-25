@@ -13,6 +13,7 @@ import { Company } from 'src/company/company.model'
 import { Counter } from 'src/common/counters/counter.model'
 import { Inventory } from 'src/inventory/inventory.model'
 import { Order } from 'src/orders/order.model'
+import { CabinetItem } from 'src/cabinet/cabinet-item.model'
 import { ProductPhoto } from 'src/products/product-photo.model'
 import { imageType, PHOTO_TOKEN } from 'src/products/products.service'
 import { Product } from 'src/products/product.model'
@@ -28,9 +29,12 @@ const EXPORT_VERSION = 'v2.0.0'
 // Байты картинок в JSON — base64: Buffer.toJSON дал бы массив чисел вчетверо длиннее
 const photosToJson = (photos: ProductPhoto[]) =>
 	photos.map((p) => ({ company: p.company, token: p.token, contentType: p.contentType, data: p.data.toString('base64') }))
+// Фото своих позиций «Моего склада» (с user) в дамп не идут и импортом не трогаются: самих позиций в дампе нет
+const SHARED_PHOTOS = { user: null }
 // Из дампа — только ключ по шаблону и байты картинки, тип по байтам: иначе импорт выложил бы на домен приложения любой файл
 const photosFromJson = (photos: any[]) =>
 	photos.flatMap((p) => {
+		if (p.user) return []
 		const data = Buffer.from(String(p.data), 'base64')
 		const contentType = imageType(data)
 		return typeof p.token === 'string' && PHOTO_TOKEN.test(p.token) && contentType ? [{ ...p, data, contentType }] : []
@@ -72,8 +76,15 @@ export class DatabaseService {
 		@InjectModel(Company) private readonly companyModel: ModelType<Company>,
 		@InjectModel(Counter) private readonly counterModel: ModelType<Counter>,
 		@InjectModel(ProductPhoto) private readonly photoModel: ModelType<ProductPhoto>,
-		private readonly realtime: RealtimeService
+		private readonly realtime: RealtimeService,
+		@InjectModel(CabinetItem) private readonly cabinetModel: ModelType<CabinetItem>
 	) {}
+
+	// импорт заменил фото: у позиции «Моего склада» с ключом пропавшей картинки — без фото, а не битая обложка
+	private async dropLostCabinetPhotos(options: any = {}) {
+		const tokens = await this.photoModel.distinct('token').setOptions(options).exec()
+		await this.cabinetModel.updateMany({ photo: { $ne: null, $nin: tokens } }, { photo: null }).setOptions(options).exec()
+	}
 
 	private emitMsgChanged() {
 		const ctx = getTenantContext()
@@ -137,7 +148,7 @@ export class DatabaseService {
 			messages: await this.messageModel.find().exec(),
 			subscriptions: await this.subscriptionModel.find().exec(),
 			changeHistories: await this.changeHistoryModel.find().exec(),
-			productPhotos: photosToJson(await this.photoModel.find().exec()),
+			productPhotos: photosToJson(await this.photoModel.find(SHARED_PHOTOS).exec()),
 		}
 	}
 
@@ -186,10 +197,11 @@ export class DatabaseService {
 		]
 		await this.assertImportable(lists, users, importer, { company: { $ne: currentCompany } })
 
-		await Promise.all(lists.map(([, model]) => model.deleteMany({})))
+		await Promise.all(lists.map(([, model]) => model.deleteMany(model === this.photoModel ? SHARED_PHOTOS : {})))
 		for (const [, model, records] of lists) {
 			if (records.length) await model.insertMany(records)
 		}
+		await this.dropLostCabinetPhotos()
 	}
 
 	// Пароли в дамп не попадают: пользователю, который сейчас есть в базе (по _id, иначе по логину в своей местности),
@@ -264,7 +276,7 @@ export class DatabaseService {
 			messages: await this.messageModel.find().setOptions({ skipTenantScope: true } as any).exec(),
 			subscriptions: await this.subscriptionModel.find().setOptions({ skipTenantScope: true } as any).exec(),
 			changeHistories: await this.changeHistoryModel.find().setOptions({ skipTenantScope: true } as any).exec(),
-			productPhotos: photosToJson(await this.photoModel.find().setOptions({ skipTenantScope: true } as any).exec()),
+			productPhotos: photosToJson(await this.photoModel.find(SHARED_PHOTOS).setOptions({ skipTenantScope: true } as any).exec()),
 		}
 	}
 
@@ -299,9 +311,10 @@ export class DatabaseService {
 		]
 		await this.assertImportable(lists, users, importer)
 
-		await Promise.all(lists.map(([, model]) => model.deleteMany({}).setOptions(skip)))
+		await Promise.all(lists.map(([, model]) => model.deleteMany(model === this.photoModel ? SHARED_PHOTOS : {}).setOptions(skip)))
 		for (const [, model, records] of lists) {
 			if (records.length) await model.insertMany(records)
 		}
+		await this.dropLostCabinetPhotos(skip)
 	}
 }

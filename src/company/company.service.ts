@@ -13,6 +13,7 @@ import { AuthService } from '../auth/auth.service'
 import { UserModel } from '../auth/user.model'
 import { RealtimeService } from '../change-history/realtime.service'
 import { ALL_PERMISSIONS, Role } from '../roles/role.model'
+import { LitnaService } from '../litna/litna.service'
 import { SeedsService } from '../seeds/seeds.service'
 import { Company } from './company.model'
 import { ChangeAdminPasswordDto } from './dto/change-admin-password.dto'
@@ -31,6 +32,8 @@ export class CompanyService {
 		private readonly jwtService: JwtService,
 		@Inject(forwardRef(() => SeedsService))
 		private readonly seedsService: SeedsService,
+		@Inject(forwardRef(() => LitnaService))
+		private readonly litna: LitnaService,
 		private readonly realtime: RealtimeService,
 		@Inject(forwardRef(() => AuthService))
 		private readonly authService: AuthService
@@ -63,6 +66,8 @@ export class CompanyService {
 		const slug = (dto.slug?.trim() || this.slugify(name) || this.randomSlug()).slice(0, 60)
 		await this.assertUniqueName(name)
 		await this.assertUniqueSlug(slug)
+		// товары с lit-na.ru берутся до создания местности: сайт недоступен или каталог пуст — местность не создаётся (502)
+		const fromSite = dto.products === 'litna' ? await this.litna.siteSeed() : null
 
 		const company = new this.companyModel({
 			name,
@@ -93,12 +98,15 @@ export class CompanyService {
 		} as any)
 
 		let seedReport: any = null
-		if (dto.seedRoles || dto.seedProducts) {
+		if (dto.seedRoles || dto.seedProducts || fromSite) {
 			try {
 				seedReport = await this.seedsService.applySeedsToCompany(String(company._id), {
 					seedRoles: !!dto.seedRoles,
-					seedProducts: !!dto.seedProducts,
+					seedProducts: !!dto.seedProducts || !!fromSite,
+					...(fromSite && { products: fromSite.products, kindCovers: fromSite.kindCovers }),
 				})
+				// фото — фоном: ответ о создании местности их не ждёт
+				if (fromSite) void this.litna.seedPhotos(String(company._id))
 			} catch (e) {
 				this.logger.error('Seed application failed', e as any)
 				seedReport = { error: (e as any)?.message || 'seeds failed' }
@@ -271,7 +279,8 @@ export class CompanyService {
 		const collections = [
 			'Users', 'Products', 'Orders', 'Purchases', 'Inventory',
 			'Roles', 'Message', 'Subscriptions', 'ChangeHistory',
-			'CabinetItems', 'Counter', 'ProductPhotos', 'UsageStats', 'UsageMonths', 'UsageRoles',
+			'CabinetItems', 'Counter', 'ProductPhotos', 'UsageStats', 'UsageMonths', 'UsageRoles', 'UsageHours',
+			'LitnaAccounts', 'LitnaOrders',
 		]
 		const deletedCounts: any = {}
 		const failed: string[] = []

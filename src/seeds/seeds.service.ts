@@ -26,7 +26,9 @@ const COLOR = /^#[0-9a-fA-F]{6}$/
 const COVER = /^[a-z0-9-]{1,32}$/
 
 // Товары шаблона из запроса. legacy — клиент прежней версии (из кэша): про обложки он не знает и их не присылает,
-// поэтому цвет и фото остаются от товара с тем же названием.
+// поэтому цвет и фото остаются от товара с тем же названием. Пару на lit-na.ru не присылает и клиент без неё —
+// тогда она тоже остаётся прежней.
+const LITNA_ID = (v: any) => (v === null ? null : Number.isInteger(v) && v > 0 ? v : undefined)
 export function seedProducts(input: any[], previous: SeedProductTemplate[], legacy: boolean) {
 	const before = new Map((previous || []).map((p) => [p.name, p]))
 	return (Array.isArray(input) ? input : []).map((p) => {
@@ -39,6 +41,7 @@ export function seedProducts(input: any[], previous: SeedProductTemplate[], lega
 			targetQty: Number.isFinite(Number(p?.targetQty)) ? Number(p.targetQty) : 0,
 			coverColor: typeof cover?.coverColor === 'string' && COLOR.test(cover.coverColor) ? cover.coverColor : undefined,
 			photo: typeof cover?.photo === 'string' && PHOTO_TOKEN.test(cover.photo) ? cover.photo : undefined,
+			litnaId: LITNA_ID(p?.litnaId === undefined ? before.get(name)?.litnaId : p.litnaId),
 		}
 	})
 }
@@ -180,9 +183,10 @@ export class SeedsService {
 		return doc
 	}
 
+	/** products и kindCovers — свои товары вместо товаров шаблона (засев с lit-na.ru); роли — всё равно из шаблона */
 	async applySeedsToCompany(
 		companyId: string,
-		opts: { seedRoles?: boolean; seedProducts?: boolean }
+		opts: { seedRoles?: boolean; seedProducts?: boolean; products?: SeedProductTemplate[]; kindCovers?: KindCover[] }
 	) {
 		const doc = await this.getOrCreate()
 		const companyOid = new Types.ObjectId(String(companyId))
@@ -204,14 +208,16 @@ export class SeedsService {
 			}
 		}
 
-		if (opts.seedProducts && doc.products?.length) {
-			const tokens = doc.products.map((p) => p.photo).filter(Boolean)
+		const products = opts.products ?? doc.products
+		const kindCovers = opts.products ? opts.kindCovers || [] : doc.kindCovers
+		if (opts.seedProducts && products?.length) {
+			const tokens = products.map((p) => p.photo).filter(Boolean)
 			const seedPhotos = new Map(
 				(await this.seedPhotoModel.find({ token: { $in: tokens } }).exec()).map((p) => [p.token, p])
 			)
 			// Каждому товару своя копия картинки: фото местности меняются и удаляются вместе с её товарами
 			const photos = []
-			const productsToInsert = doc.products.map((p) => {
+			const productsToInsert = products.map((p) => {
 				const source = seedPhotos.get(p.photo)
 				const photo = source ? randomBytes(16).toString('hex') : undefined
 				if (source) photos.push({ company: companyOid, token: photo, contentType: source.contentType, data: source.data })
@@ -224,6 +230,7 @@ export class SeedsService {
 					targetQty: 0,
 					coverColor: p.coverColor,
 					photo,
+					litnaId: p.litnaId,
 					deletedAt: null,
 					createdAt: Date.now(),
 				}
@@ -240,11 +247,11 @@ export class SeedsService {
 				}
 				result.productsCreated = productsToInsert.length
 			}
-			if (doc.kindCovers?.length) {
+			if (kindCovers?.length) {
 				await this.messageModel
 					.updateOne(
 						{ company: companyOid },
-						{ $set: { kindCovers: doc.kindCovers.map((k) => ({ category: k.category, cover: k.cover })) } },
+						{ $set: { kindCovers: kindCovers.map((k) => ({ category: k.category, cover: k.cover })) } },
 						{ upsert: true }
 					)
 					.exec()

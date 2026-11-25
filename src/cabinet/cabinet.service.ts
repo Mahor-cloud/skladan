@@ -3,18 +3,26 @@
  * Licensed under Apache 2.0
  */
 
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common'
 import { ModelType } from '@typegoose/typegoose/lib/types'
+import { randomBytes } from 'crypto'
 import { Types } from 'mongoose'
 import { InjectModel } from 'nestjs-typegoose'
 import { UserModel } from '../auth/user.model'
 import { RealtimeService } from '../change-history/realtime.service'
 import { getTenantContext } from '../common/tenant-context/tenant-context.storage'
 import { Order } from '../orders/order.model'
+import { ProductPhoto } from '../products/product-photo.model'
 import { Product } from '../products/product.model'
+import { imageType, PHOTO_QUOTA } from '../products/products.service'
 import { CabinetItem } from './cabinet-item.model'
 import { CreateCabinetItemDto } from './dto/create-cabinet-item.dto'
 import { UpdateCabinetItemDto } from './dto/update-cabinet-item.dto'
+
+// Фото своих позиций входят в общий объём фото местности (PHOTO_QUOTA). Сверх того: все личные вместе — не больше трети его,
+// чтобы каталогу всегда оставалось место, у одного человека — не больше 2 МБ (кадр WebP весит десятки КБ).
+export const OWN_PHOTO_QUOTA = 10 * 1024 * 1024
+export const USER_PHOTO_QUOTA = 2 * 1024 * 1024
 
 export interface AutofillSuggestion {
 	product: string
@@ -33,7 +41,8 @@ export class CabinetService {
 		@InjectModel(Product) private readonly productModel: ModelType<Product>,
 		@InjectModel(Order) private readonly orderModel: ModelType<Order>,
 		@InjectModel(UserModel) private readonly userModel: ModelType<UserModel>,
-		private readonly realtime: RealtimeService
+		private readonly realtime: RealtimeService,
+		@InjectModel(ProductPhoto) private readonly photoModel: ModelType<ProductPhoto>
 	) {}
 
 	private emitCabinetChanged() {
@@ -170,6 +179,9 @@ export class CabinetService {
 			currentQty: c.currentQty,
 			inOrderQty: 0,
 			note: c.note || '',
+			cover: c.cover || null,
+			coverColor: c.coverColor || null,
+			photo: c.photo || null,
 			isCustom: true,
 		}))
 		return [...merged, ...customRows]
@@ -329,6 +341,8 @@ export class CabinetService {
 			currentQty: dto.currentQty,
 			customPrice: dto.customPrice || 0,
 			note: dto.note,
+			cover: (isCustom && dto.cover) || undefined,
+			coverColor: (isCustom && dto.coverColor) || undefined,
 			...(companyId ? { company: companyId } : {}),
 		})
 		await created.save()
@@ -347,6 +361,9 @@ export class CabinetService {
 		if (dto.note !== undefined) item.note = dto.note
 		if (dto.customPrice !== undefined) item.customPrice = dto.customPrice
 		if (dto.customName !== undefined && item.customName !== undefined) item.customName = dto.customName
+		// у позиции со склада обложка товара
+		if (dto.coverColor !== undefined && !item.product) item.coverColor = dto.coverColor
+		if (dto.cover !== undefined && !item.product) item.cover = dto.cover
 		await item.save()
 		this.emitCabinetChanged()
 		return item
@@ -359,9 +376,73 @@ export class CabinetService {
 			throw new ForbiddenException('Нельзя удалять чужой кабинет')
 		}
 		item.deletedAt = new Date()
-		await item.save()
+		// Прежний документ: удаляется фото, которое было у позиции в момент удаления, даже если его только что заменили
+		const before = await this.cabinetModel.findByIdAndUpdate(id, { deletedAt: item.deletedAt, photo: null }).exec()
+		if (before?.photo) await this.photoModel.deleteOne({ token: before.photo }).exec()
+		item.photo = null
 		this.emitCabinetChanged()
 		return item
+	}
+
+	private async ownCustomItem(id: string, user: UserModel) {
+		const item = await this.cabinetModel.findOne({ _id: id, deletedAt: null }).select('company user product photo').exec()
+		if (!item) throw new NotFoundException('Позиция личного склада не найдена')
+		if (String(item.user) !== String(user._id)) throw new ForbiddenException('Нельзя редактировать чужой кабинет')
+		if (item.product) throw new BadRequestException('У позиции со склада обложка товара')
+		return item
+	}
+
+	async setPhoto(id: string, data: Buffer | undefined, user: UserModel) {
+		const contentType = imageType(data)
+		if (!contentType) throw new BadRequestException('Нужна картинка WebP, PNG или JPEG')
+		const item = await this.ownCustomItem(id, user)
+		const size = { $binarySize: '$data' }
+		// как у товара: сначала запись, потом подсчёт вместе с ней — одновременные загрузки пределы не превысят
+		const token = randomBytes(16).toString('hex')
+		await this.photoModel.create({ company: item.company, user: item.user, token, contentType, data })
+		const [used] = await this.photoModel
+			.aggregate([
+				// нынешнее фото позиции не считается: при замене оно удаляется
+				{ $match: { company: item.company, token: { $ne: item.photo ?? null } } },
+				{
+					$group: {
+						_id: null,
+						all: { $sum: size },
+						own: { $sum: { $cond: [{ $gt: ['$user', null] }, size, 0] } },
+						mine: { $sum: { $cond: [{ $eq: ['$user', item.user] }, size, 0] } },
+					},
+				},
+			])
+			.exec()
+		const over =
+			(used?.all || 0) > PHOTO_QUOTA
+				? 'Превышен объём фото местности'
+				: (used?.own || 0) > OWN_PHOTO_QUOTA
+					? 'Превышен объём фото личных складов местности'
+					: (used?.mine || 0) > USER_PHOTO_QUOTA && 'Превышен объём ваших фото в «Моём складе»'
+		if (over) {
+			await this.photoModel.deleteOne({ token }).exec()
+			throw new PayloadTooLargeException(over)
+		}
+		return this.swapPhoto(id, token)
+	}
+
+	async removePhoto(id: string, user: UserModel) {
+		await this.ownCustomItem(id, user)
+		return this.swapPhoto(id, null)
+	}
+
+	// Прежний документ: удаляется ровно та картинка, которую заменили, даже при двух загрузках сразу
+	private async swapPhoto(id: string, photo: string | null) {
+		const before = await this.cabinetModel.findOneAndUpdate({ _id: id, deletedAt: null }, { photo }).exec()
+		if (!before) {
+			// позицию удалили между проверкой и записью — новая картинка ей уже не нужна
+			if (photo) await this.photoModel.deleteOne({ token: photo }).exec()
+			throw new NotFoundException('Позиция личного склада не найдена')
+		}
+		if (before.photo) await this.photoModel.deleteOne({ token: before.photo }).exec()
+		this.emitCabinetChanged()
+		return { ...before.toObject(), photo }
 	}
 
 	async replenishAfterOrder(orderItems: Array<{ product: any; quantity: number }>, userId: any) {

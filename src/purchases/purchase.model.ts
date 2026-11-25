@@ -60,4 +60,21 @@ export class Purchase {
 
 	@prop()
 	comment?: string
+
+	// заказ на lit-na.ru — открытые данные; ключ заказа лежит отдельно, в LitnaOrders. shipping в totalAmount не входит.
+	@prop()
+	litna?: {
+		orderId: number | null
+		status: string
+		shipping: number
+		total: number
+		delivery: { kind: string; title: string | null; point: string | null }
+		createdAt: number
+		/** когда проверка отметила оплату (статус сайта — в status) */
+		paidAt?: number
+		/** когда фоновая проверка увидела заказ отправленным (статус магазина «Доставка») */
+		shippedAt?: number
+		/** когда фоновая проверка увидела заказ отменённым уже после оплаты */
+		cancelledAt?: number
+	}
 }

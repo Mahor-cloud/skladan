@@ -87,7 +87,7 @@ function guardCompleteWithoutConfirmedPaid(
 		updateDto.confirmedPaid !== true
 	) {
 		throw new BadRequestException(
-			'Нельзя завершить заказ до подтверждения оплаты казначеем'
+			'Нельзя завершить заказ до подтверждения оплаты'
 		)
 	}
 }
@@ -234,7 +234,7 @@ describe('state-machine guards', () => {
 		it('throws when isCompleted=true but confirmedPaid not yet confirmed', () => {
 			expect(() =>
 				guardCompleteWithoutConfirmedPaid({ isCompleted: true }, { confirmedPaid: false })
-			).toThrow('Нельзя завершить заказ до подтверждения оплаты казначеем')
+			).toThrow('Нельзя завершить заказ до подтверждения оплаты')
 		})
 
 		it('passes when isCompleted=true and confirmedPaid is already true on old order', () => {

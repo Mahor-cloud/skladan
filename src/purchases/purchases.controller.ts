@@ -54,6 +54,14 @@ export class PurchasesController {
 		return this.purchasesService.update(id, updatePurchaseDto, currentUser)
 	}
 
+	/** Созданную вручную неоплаченную — снова в черновик */
+	@Post(':id/draft')
+	@Auth('user', ['create_purchases', 'edit_purchases'])
+	@UsePipes(IdValidationPipe)
+	toDraft(@Param('id') id: string, @CurrentUser() currentUser: UserModel) {
+		return this.purchasesService.backToDraft(id, currentUser)
+	}
+
 	@Delete(':id')
 	@Auth('user', ['delete_purchases'])
 	@UsePipes(IdValidationPipe)

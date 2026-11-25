@@ -19,6 +19,7 @@ import { createHash } from 'crypto'
 import { InjectModel } from 'nestjs-typegoose'
 import { ChangeHistoryService } from 'src/change-history/change-history.service'
 import { Company } from 'src/company/company.model'
+import { Role } from 'src/roles/role.model'
 import { authDto } from './dto/auth.dto'
 import { CreateUserDto } from './dto/create-user.dto'
 import { RefreshTokenDto } from './dto/refreshToken.dto'
@@ -46,8 +47,22 @@ export class AuthService {
 		@InjectModel(UserModel) private readonly UserModel: ModelType<UserModel>,
 		@InjectModel(Company) private readonly companyModel: ModelType<Company>,
 		private readonly jwtService: JwtService,
-		private readonly changeHistoryService: ChangeHistoryService
+		private readonly changeHistoryService: ChangeHistoryService,
+		@InjectModel(Role) private readonly roleModel: ModelType<Role>
 	) {}
+
+	private async isSystemRole(role: any): Promise<boolean> {
+		return role ? !!(await this.roleModel.exists({ _id: role, isSystem: true }).exec()) : false
+	}
+
+	// Системную роль и её владельцев меняет только председатель или супер-админ:
+	// иначе служащий с правом править пользователей назначил бы председателем себя или сменил председателю пароль
+	private async guardSystem(currentUser: UserModel, ...roles: any[]) {
+		if ((currentUser as any).isSuperAdmin || (currentUser.role as any)?.isSystem === true) return
+		for (const role of roles) {
+			if (await this.isSystemRole(role)) throw new ForbiddenException('Пользователя с системной ролью меняет только председатель')
+		}
+	}
 
 	private readonly loginFails = new Map<string, { n: number; until: number; last: number }>()
 
@@ -232,6 +247,7 @@ export class AuthService {
 		return { refreshToken, accessToken }
 	}
 	async createUser(user: CreateUserDto, currentUser: UserModel) {
+		await this.guardSystem(currentUser, user.role)
 		const loginTaken = await this.UserModel.findOne({ login: user.login })
 			.setOptions({ skipTenantScope: true } as any)
 		if (loginTaken) {
@@ -282,6 +298,7 @@ export class AuthService {
 
 		const oldUser = await this.UserModel.findById(id).exec()
 		if (!oldUser) throw new NotFoundException('Пользователь не найден')
+		await this.guardSystem(currentUser, oldUser.role, updateUserDto.role)
 		// Чужой пароль сменили — прежние сессии этого пользователя завершаются (свою правку не трогаем: иначе выбросило бы самого),
 		// а счёт неудачных входов по его логину обнуляется
 		const update: any = { $set: updateUserDto }
@@ -298,14 +315,14 @@ export class AuthService {
 			}
 		}
 
-		if (
-			updateUserDto.isAdmin !== undefined &&
-			updateUserDto.isAdmin !== oldUser.isAdmin &&
-			!(currentUser as any).isSuperAdmin
-		) {
-			throw new ForbiddenException(
-				'Изменять флаг isAdmin может только супер-админ'
-			)
+		if (updateUserDto.isAdmin !== undefined && updateUserDto.isAdmin !== oldUser.isAdmin && !(currentUser as any).isSuperAdmin) {
+			if ((currentUser.role as any)?.isSystem !== true) {
+				throw new ForbiddenException('Менять «Служащий» может председатель')
+			}
+			// без галочки председатель (и сам, и второй) не попал бы обратно в пользователей (AdminGuard) и не вернул бы её
+			if (updateUserDto.isAdmin === false && (await this.isSystemRole(oldUser.role))) {
+				throw new BadRequestException('У председателя галочку «Служащий» снять нельзя')
+			}
 		}
 		delete (updateUserDto as any).isSuperAdmin
 
@@ -389,6 +406,7 @@ export class AuthService {
 	}
 
 	async remove(id: string, currentUser: UserModel) {
+		await this.guardSystem(currentUser, (await this.UserModel.findById(id).exec())?.role)
 		const removedUser = await this.UserModel.findByIdAndUpdate(
 			id,
 			{ deletedAt: Date.now() },
@@ -421,14 +439,14 @@ export class AuthService {
 		if (oldUser.login !== newUser.login) {
 			changes.push(`Логин изменен с ${oldUser.login} на ${newUser.login}`)
 		}
-		if (oldUser.role !== newUser.role) {
+		if (String(oldUser.role) !== String(newUser.role)) {
 			changes.push(`Роль изменена`)
 		}
 		if (oldUser.isAdmin !== newUser.isAdmin) {
 			changes.push(
 				oldUser.isAdmin
-					? 'Пользователь больше не является администратором'
-					: 'Пользователь стал администратором'
+					? 'Пользователь больше не служащий'
+					: 'Пользователь стал служащим'
 			)
 		}
 		return changes.join(', ')

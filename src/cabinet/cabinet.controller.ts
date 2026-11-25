@@ -3,11 +3,13 @@
  * Licensed under Apache 2.0
  */
 
-import { Body, Controller, Delete, Get, Param, Post, Put, UsePipes } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, UploadedFile, UseInterceptors, UsePipes } from '@nestjs/common'
+import { FileInterceptor } from '@nestjs/platform-express'
 import { Auth } from '../auth/decorators/auth.decorator'
 import { CurrentUser } from '../auth/decorators/current-user.decorator'
 import { UserModel } from '../auth/user.model'
 import { IdValidationPipe } from '../pipes/id.validation.pipe'
+import { PHOTO_UPLOAD } from '../products/products.service'
 import { CabinetService } from './cabinet.service'
 import { CreateCabinetItemDto } from './dto/create-cabinet-item.dto'
 import { UpdateCabinetItemDto } from './dto/update-cabinet-item.dto'
@@ -69,6 +71,22 @@ export class CabinetController {
 	@UsePipes(IdValidationPipe)
 	update(@Param('id') id: string, @Body() dto: UpdateCabinetItemDto, @CurrentUser() currentUser: UserModel) {
 		return this.cabinetService.update(id, dto, currentUser)
+	}
+
+	// Фото своей позиции: те же проверки и хранилище, что у товара; отдаётся тем же GET /products/photo/:token
+	@Put(':id/photo')
+	@Auth('user', ['cabinet_access'])
+	@UsePipes(IdValidationPipe)
+	@UseInterceptors(FileInterceptor('file', PHOTO_UPLOAD))
+	setPhoto(@Param('id') id: string, @UploadedFile() file: Express.Multer.File, @CurrentUser() currentUser: UserModel) {
+		return this.cabinetService.setPhoto(id, file?.buffer, currentUser)
+	}
+
+	@Delete(':id/photo')
+	@Auth('user', ['cabinet_access'])
+	@UsePipes(IdValidationPipe)
+	removePhoto(@Param('id') id: string, @CurrentUser() currentUser: UserModel) {
+		return this.cabinetService.removePhoto(id, currentUser)
 	}
 
 	@Delete(':id')

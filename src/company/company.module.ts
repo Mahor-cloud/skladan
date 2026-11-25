@@ -12,6 +12,7 @@ import { UserModel } from '../auth/user.model'
 import { ChangeHistoryModule } from '../change-history/change-history.module'
 import { getJwtConfig } from '../configs/jwt.config'
 import { Role } from '../roles/role.model'
+import { LitnaModule } from '../litna/litna.module'
 import { SeedsModule } from '../seeds/seeds.module'
 import { Company } from './company.model'
 import { CompanyController } from './company.controller'
@@ -29,6 +30,7 @@ import { CompanyService } from './company.service'
 		forwardRef(() => AuthModule),
 		forwardRef(() => SeedsModule),
 		forwardRef(() => ChangeHistoryModule),
+		forwardRef(() => LitnaModule),
 	],
 	controllers: [CompanyController],
 	providers: [CompanyService],

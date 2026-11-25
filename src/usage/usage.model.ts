@@ -74,6 +74,65 @@ export class UsageStat {
 }
 
 /**
+ * Те же счётчики по часам — для сводки за последние 24 часа. Вспомогательные: каждая запись живёт трое суток
+ * от начала своего часа и удаляется базой сама (индекс со сроком жизни), так что коллекция не растёт.
+ */
+@index(
+	{ company: 1, hour: 1, user: 1, device: 1, screen: 1, kind: 1, label: 1 },
+	{ unique: true }
+)
+@index({ at: 1 }, { expireAfterSeconds: 3 * 24 * 3600 })
+@modelOptions({
+	schemaOptions: { collection: 'UsageHours', versionKey: false },
+	options: { allowMixed: 0 },
+})
+export class UsageHour {
+	@prop({ type: mongoose.Types.ObjectId, required: true })
+	company!: mongoose.Types.ObjectId
+
+	/** Час по московскому времени, ГГГГ-ММ-ДДTЧЧ */
+	@prop({ required: true })
+	hour!: string
+
+	/** Начало этого часа: по нему сводка отбирает 24 часа и база удаляет старые записи */
+	@prop({ required: true })
+	at!: Date
+
+	@prop({ type: mongoose.Types.ObjectId, required: true })
+	user!: mongoose.Types.ObjectId
+
+	@prop({ type: mongoose.Types.ObjectId })
+	roleId?: mongoose.Types.ObjectId
+
+	@prop({ default: '' })
+	role!: string
+
+	@prop()
+	staff?: boolean
+
+	@prop({ required: true })
+	device!: string
+
+	@prop({ default: '' })
+	screen!: string
+
+	@prop({ required: true })
+	kind!: string
+
+	@prop({ default: '' })
+	label!: string
+
+	@prop({ default: 0 })
+	count!: number
+
+	@prop({ default: 0 })
+	ms!: number
+
+	@prop({ default: 0 })
+	maxMs!: number
+}
+
+/**
  * Готовые итоги по месяцам — для сводки за длинный период (год, всё время): подробных записей за год около миллиона,
  * считать по ним каждое открытие страницы на боевом сервере слишком долго. Пишутся одновременно с подробными.
  * Два вида записей:

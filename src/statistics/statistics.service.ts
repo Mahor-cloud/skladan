@@ -220,12 +220,14 @@ export class StatisticsService {
 					$group: {
 						_id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$purchaseDate' } } },
 						amount: { $sum: '$totalConfirmedAmount' },
+						// доставка заказа lit-na.ru в totalConfirmedAmount не входит — отдельным числом; к товарам её не привязать, поэтому в отборе по товарам её нет
+						shipping: { $sum: '$litna.shipping' },
 						purchasesCount: { $sum: 1 },
 						completedCount: { $sum: { $cond: ['$isCompleted', 1, 0] } },
 					},
 				},
 				{ $sort: { _id: 1 } },
-				{ $project: { _id: 0, date: '$_id', amount: 1, purchasesCount: 1, completedCount: 1 } },
+				{ $project: { _id: 0, date: '$_id', amount: 1, shipping: 1, purchasesCount: 1, completedCount: 1 } },
 			])
 
 		const purchasedByProduct = await this.purchaseModel.aggregate([
