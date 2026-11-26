@@ -731,6 +731,11 @@ describe('расчёт', () => {
 		const quote = await setup({ purchase: { items: [{ product: P1, quantity: 15 }] } }).svc.quote('pu1', USER)
 		expect(quote).toMatchObject({ goods: 15000, shipping: 0, total: 15000, free: true, canOrder: true })
 		expect(quote.delivery.point).toBe('SAR6, Саратов, ул. Тестовая')
+		// адрес при пункте вписан руками: бесплатная доставка идёт по нему, не в пункт
+		fakeSite()
+		const account = { address: '410019, Саратов, ул. Ручная, 7', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов', manual: true } }
+		const byHand = await setup({ account, purchase: { items: [{ product: P1, quantity: 15 }] } }).svc.quote('pu1', USER)
+		expect(byHand.delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: '410019, Саратов, ул. Ручная, 7', manual: true })
 	})
 
 	it('у созданной закупки расчёта нет', async () => {
@@ -1605,6 +1610,23 @@ describe('адрес одной строкой, права, миниатюры',
 		await svc.order('pu1', 3625, USER)
 		expect(site.checkout.get('billing_city')).toBe('Саратов')
 		expect(site.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: Россия, Саратов, ул. Тестовая, 1')
+	})
+
+	it('пункт выдачи, адрес вписан руками: на сайт уходит как написан; в расчёте при платной доставке — пункт, при бесплатной — адрес', async () => {
+		const site = fakeSite()
+		const account = { address: '410019, Саратов, ул. Ручная, 7', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов', manual: true } }
+		const { svc } = setup({ account })
+		const quote = await svc.quote('pu1', USER)
+		expect(quote.delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: 'SAR6, Саратов, ул. Тестовая' })
+		await svc.order('pu1', 3625, USER)
+		expect(site.checkout.get('billing_city')).toBe('Саратов')
+		expect(site.checkout.get('billing_address_1')).toBe('410019, Саратов, ул. Ручная, 7')
+		// адрес стёрли — снова строка пункта
+		const erased = fakeSite()
+		const blank = setup({ account: { address: '', delivery: account.delivery } })
+		expect((await blank.svc.quote('pu1', USER)).delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: 'SAR6, Саратов, ул. Тестовая' })
+		await blank.svc.order('pu1', 3625, USER)
+		expect(erased.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: SAR6, Саратов, ул. Тестовая')
 	})
 
 	it('настройка — только с правом создавать или править закупки; председатель без них — нет', () => {

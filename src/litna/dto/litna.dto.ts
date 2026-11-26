@@ -44,6 +44,11 @@ export class LitnaDeliveryDto {
 	@IsString()
 	@MaxLength(100)
 	city?: string
+
+	/** Адрес при пункте выдачи вписан руками (бесплатную доставку магазин везёт не в пункт): уходит на сайт как написан */
+	@IsOptional()
+	@IsBoolean()
+	manual?: boolean
 }
 
 export class LitnaLinkDto {

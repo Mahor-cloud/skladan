@@ -42,13 +42,13 @@ export class LitnaAccount {
 	@prop({ default: '' })
 	email: string
 
-	/** Адрес одной строкой: до двери — как написал человек (город — первой частью), у пункта выдачи — адрес пункта */
+	/** Адрес одной строкой: до двери — как написал человек (город — первой частью), у пункта выдачи — адрес пункта, пока его не поправили руками (delivery.manual) */
 	@prop({ default: '' })
 	address: string
 
-	/** code и title — выбранный пункт (title — строка для сайта), city — город, по которому искали пункт */
+	/** code и title — выбранный пункт (title — строка для сайта), city — город, по которому искали пункт, manual — адрес при пункте вписан руками */
 	@prop()
-	delivery?: { kind: string; code?: string; title?: string; city?: string }
+	delivery?: { kind: string; code?: string; title?: string; city?: string; manual?: boolean }
 }
 
 export interface LitnaOrder extends Base {}

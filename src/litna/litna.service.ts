@@ -121,7 +121,11 @@ const placeOf = (a: LitnaAccount) => {
 const ready = (a: LitnaAccount) => !!(a?.firstName && a.lastName && a.phone && a.email && a.delivery?.kind && placeOf(a).city)
 const loggedIn = (a: LitnaAccount) => !!(a?.login && a.password)
 
-// Пункт пишется и в адрес: при бесплатной доставке сайт пункт не спрашивает, а поле адреса у него обязательное
+/** Адрес при пункте выдачи вписан руками: бесплатную доставку магазин везёт не в пункт, а по адресу */
+const byHand = (a: LitnaAccount) => isPvz(a?.delivery?.kind) && !!a.delivery.manual && !!a.address
+
+// Пункт пишется и в адрес: при бесплатной доставке сайт пункт не спрашивает, а поле адреса у него обязательное.
+// Вписанный руками адрес уходит как написан.
 const customer = (a: LitnaAccount): Customer => {
 	const { city, postcode, state } = placeOf(a)
 	return {
@@ -130,7 +134,7 @@ const customer = (a: LitnaAccount): Customer => {
 		state,
 		city,
 		postcode,
-		address_1: isPvz(a.delivery.kind)
+		address_1: isPvz(a.delivery.kind) && !byHand(a)
 			? `ПВЗ ${a.delivery.kind === 'cdek_pvz' ? 'CDEK' : 'Яндекс Доставки'}: ${a.address || a.delivery.title || a.delivery.code}`
 			: a.address,
 		phone: a.phone,
@@ -780,6 +784,9 @@ export class LitnaService {
 				} else if (rate && held) Object.assign(held, { session: s, rate })
 			}
 		}
+		// адрес вписан руками: при бесплатной доставке посылка идёт по нему (manual — подпись «Адрес»), при платной — в пункт
+		const toAddress = byHand(account) && rate?.kind === 'free'
+		const point = byHand(account) && !toAddress ? account.delivery.title : account?.address || account?.delivery?.title
 		const goods = kop(lines.reduce((sum, l) => sum + kop(l.price || 0) * l.quantity, 0) / 100) / 100
 		const shipping = kop(rate?.price || 0) / 100
 		return {
@@ -788,7 +795,7 @@ export class LitnaService {
 			shipping,
 			total: (kop(goods) + kop(shipping)) / 100,
 			free: rate?.kind === 'free',
-			delivery: { kind: kind || null, title: TITLES[kind] || null, point: (isPvz(kind) && (account.address || account.delivery.title)) || '' },
+			delivery: { kind: kind || null, title: TITLES[kind] || null, point: (isPvz(kind) && point) || '', ...(toAddress && { manual: true }) },
 			problems: [...problems],
 			notice,
 			// пустой черновик заказывать нечего
