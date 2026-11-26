@@ -11,7 +11,7 @@ import { LitnaOrder } from './litna.model'
 import { createCipheriv, createHash, randomBytes } from 'crypto'
 import { seal, unseal } from '../common/seal'
 import { PHOTO_QUOTA } from '../products/products.service'
-import { LitnaService } from './litna.service'
+import { LitnaService, orderNote } from './litna.service'
 
 // своя копия шифрования, что была в litna.service.ts до перехода на common/seal: сохранённое ею должно читаться
 function oldSeal(text: string, secret: string) {
@@ -130,6 +130,8 @@ function fakeSite() {
 		const id = state.nextId++
 		state.orders.set(id, { key: id === 501 ? 'wc_order_K' : `wc_order_${id}`, status: 'pending', paid: false, total, note: form.get('order_comments') || '', guest: c.who !== 'account', email: form.get('billing_email') })
 		state.awaiting.set(c.cart, id)
+		// WooCommerce переносит адрес заказа в кабинет покупателя
+		if (c.who === 'account') for (const [k, v] of form) if (k.startsWith('billing_')) state.profile[k] = v
 		if (state.foreignDuring) state.orders.set(state.nextId++, { key: 'wc_order_F', status: 'pending', paid: false, total, note: '' })
 		return id
 	}
@@ -510,8 +512,8 @@ describe('пароль сайта', () => {
 		expect(a).not.toHaveProperty('links')
 		expect(JSON.stringify(a)).not.toContain(db.account.password)
 		fakeSite()
-		await svc.saveAccount({ firstName: 'Пётр', address: 'Энгельс, ул. Тельмана, 5' } as any, USER)
-		expect(db.accountUpdate).toEqual([{ company: 'c1' }, { $set: { firstName: 'Пётр', address: 'Энгельс, ул. Тельмана, 5' } }])
+		await svc.saveAccount({ firstName: 'Пётр', street: ' ул.  Тельмана,\n5 ', city: 'Энгельс', state: '', postcode: '413100' } as any, USER)
+		expect(db.accountUpdate).toEqual([{ company: 'c1' }, { $set: { firstName: 'Пётр', street: 'ул. Тельмана, 5', city: 'Энгельс', state: '', postcode: '413100' } }])
 		expect(db.history).toEqual([expect.objectContaining({ user: 'u1', changeType: 'litna-account-updated', description: 'Аккаунт lit-na.ru изменён' })])
 		expect(JSON.stringify(db.history)).not.toContain('Энгельс')
 	})
@@ -726,22 +728,15 @@ describe('расчёт', () => {
 		expect(await setup({ purchase: { items: [] } }).svc.quote('pu1', USER)).toMatchObject({ lines: [], canOrder: false })
 	})
 
-	it('от 15 000 ₽ — единственная бесплатная доставка; адрес из аккаунта уходит и в примечание к заказу', async () => {
-		const plain = fakeSite()
-		const ctx = setup({ purchase: { items: [{ product: P1, quantity: 15 }] } })
+	it('от 15 000 ₽ — единственная бесплатная доставка; в примечании заказа — адрес получателя и комментарий', async () => {
+		const site = fakeSite()
+		const account = { postcode: '410019', city: 'Саратов', street: 'ул. Ручная, 7', comment: 'Терминал на Соколовой', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов' } }
+		const ctx = setup({ account, purchase: { items: [{ product: P1, quantity: 15 }] } })
 		const quote = await ctx.svc.quote('pu1', USER)
 		expect(quote).toMatchObject({ goods: 15000, shipping: 0, total: 15000, free: true, canOrder: true })
-		expect(quote.delivery.point).toBe('SAR6, Саратов, ул. Тестовая')
+		expect(quote.delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: 'SAR6, Саратов, ул. Тестовая' })
 		await ctx.svc.order('pu1', 15000, USER)
-		expect(plain.checkout.get('order_comments')).toBe(`${ctx.db.placed.code} · Skladan · закупка №31 · Адрес: SAR6, Саратов, ул. Тестовая`)
-		// адрес при пункте вписан руками: бесплатная доставка идёт по нему, не в пункт
-		const account = { address: '410019, Саратов, ул. Ручная, 7', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов', manual: true } }
-		const site = fakeSite()
-		const hand = setup({ account, purchase: { items: [{ product: P1, quantity: 15 }] } })
-		expect((await hand.svc.quote('pu1', USER)).delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: '410019, Саратов, ул. Ручная, 7', manual: true })
-		// и в примечание к заказу: адрес терминала магазин просит писать там
-		await hand.svc.order('pu1', 15000, USER)
-		expect(site.checkout.get('order_comments')).toBe(`${hand.db.placed.code} · Skladan · закупка №31 · Адрес: 410019, Саратов, ул. Ручная, 7`)
+		expect(site.checkout.get('order_comments')).toBe(`СкладАН · закупка №31 (код ${ctx.db.placed.code}) · Адрес: 410019, Саратов, ул. Ручная, 7 · Терминал на Соколовой`)
 	})
 
 	it('у созданной закупки расчёта нет', async () => {
@@ -777,7 +772,7 @@ describe('заказ', () => {
 		expect(sent.get('billing_email')).toBe('na@example.org')
 		expect(sent.get('woo_pek_doc')).toBe('p')
 		expect(db.placed.code).toMatch(/^[A-Z2-9]{8}$/)
-		expect(sent.get('order_comments')).toBe(`${db.placed.code} · Skladan · закупка №31`)
+		expect(sent.get('order_comments')).toBe(`СкладАН · закупка №31 (код ${db.placed.code})`)
 		// страница оплаты открыта после оформления — сумма сверена
 		expect(site.calls.some((c) => c.path === '/checkout/order-pay/501/?key=wc_order_K')).toBe(true)
 		// чужая позиция корзины аккаунта убрана до заказа, после заказа корзина пуста
@@ -1522,10 +1517,9 @@ describe('документы заказа: счёт и накладная', () =
 })
 
 describe('адрес одной строкой, права, миниатюры', () => {
-	it('аккаунт: адрес строкой и доставка с городом, без отдельных области, города и индекса', async () => {
+	it('аккаунт: адрес получателя — полями сайта; запись старого вида (адрес одной строкой) читается теми же полями', async () => {
 		fakeSite()
-		const { svc } = setup({ account: { address: 'Саратов, ул. Московская, 1', delivery: { kind: 'cdek_door' } } })
-		expect(await svc.account()).toEqual({
+		const shape = {
 			configured: true,
 			login: 'na@example.org',
 			loginFailed: false,
@@ -1533,9 +1527,29 @@ describe('адрес одной строкой, права, миниатюры',
 			lastName: 'Петров',
 			phone: '+79000000000',
 			email: 'na@example.org',
+			street: 'ул. Московская, 1',
+			city: 'Саратов',
+			state: '',
+			postcode: '',
+			// одной строкой — для ещё не обновившегося клиента
 			address: 'Саратов, ул. Московская, 1',
+			comment: '',
 			delivery: { kind: 'cdek_door' },
-		})
+		}
+		expect(await setup({ account: { street: 'ул. Московская, 1', city: 'Саратов', delivery: { kind: 'cdek_door' } } }).svc.account()).toEqual(shape)
+		expect(await setup({ account: { address: 'Саратов, ул. Московская, 1', delivery: { kind: 'cdek_door' } } }).svc.account()).toEqual(shape)
+		// старая запись с пунктом выдачи: строка — адрес пункта, а не получателя; с пометкой «вписан руками» — получателя
+		const point = { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов' }
+		expect(await setup({ account: { address: '410000, Саратов, ул. Тестовая, 12' } }).svc.account()).toMatchObject({ street: '', city: '', postcode: '', delivery: { ...point, address: '410000, Саратов, ул. Тестовая, 12' } })
+		expect(await setup({ account: { address: '410019, Саратов, ул. Ручная, 7', delivery: { ...point, manual: true } } }).svc.account()).toMatchObject({ street: 'ул. Ручная, 7', city: 'Саратов', postcode: '410019' })
+	})
+
+	it('примечание к заказу: «СкладАН», закупка и код, затем адрес получателя (при любом способе) и комментарий — одной строкой', () => {
+		const door = { city: 'Саратов', street: 'ул. Московская, 1', delivery: { kind: 'cdek_door' } } as any
+		expect(orderNote('K7', 31, door)).toBe('СкладАН · закупка №31 (код K7) · Адрес: Саратов, ул. Московская, 1')
+		expect(orderNote('K7', 31, { ...door, comment: ' Терминал ПЭК на Соколовой\n звонить за час ' })).toBe('СкладАН · закупка №31 (код K7) · Адрес: Саратов, ул. Московская, 1 · Терминал ПЭК на Соколовой звонить за час')
+		expect(orderNote('K7', 31, { address: '', comment: 'только это', delivery: { kind: 'yandex_pvz', title: 'Саратов (ул. Первая)' } } as any)).toBe('СкладАН · закупка №31 (код K7) · только это')
+		expect(orderNote('K7', 31, null)).toBe('СкладАН · закупка №31 (код K7)')
 	})
 
 	it('адрес в обе стороны: при входе получатель и адрес берутся из кабинета сайта поверх наших; сохранение пишет адрес в кабинет; сверка замечает правку на сайте', async () => {
@@ -1544,11 +1558,13 @@ describe('адрес одной строкой, права, миниатюры',
 		site.profile.billing_phone = ''
 		let ctx = setup({ account: { login: '', password: '', firstName: '', address: 'Энгельс, ул. Старая, 1', delivery: { kind: 'cdek_door' } } })
 		const a: any = await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)
-		expect(a).toMatchObject({ firstName: 'Анна', lastName: 'Сайтова', phone: '+79000000000', email: 'site@example.org', address: '410000, Саратовская область, Саратов, ул. Рабочая, 7' })
-		// у пункта выдачи адрес — сам пункт: адрес сайта его не заменяет; строка «ПВЗ …» (её пишет наш заказ) адресом не считается
+		expect(a).toMatchObject({ firstName: 'Анна', lastName: 'Сайтова', phone: '+79000000000', email: 'site@example.org', street: 'ул. Рабочая, 7', city: 'Саратов', state: 'Саратовская область', postcode: '410000' })
+		expect(a.address).toBe('410000, Саратовская область, Саратов, ул. Рабочая, 7')
+		expect(ctx.db.account.address).toBe('')
+		// адрес получателя от способа доставки не зависит: и при выбранном пункте берётся с сайта; строка «ПВЗ …» (её пишет наш заказ без адреса) адресом не считается
 		site = fakeSite()
 		ctx = setup({ account: { login: '', password: '' } })
-		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ lastName: 'Сайтова', address: '' })
+		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ lastName: 'Сайтова', address: '410000, Саратовская область, Саратов, ул. Рабочая, 7' })
 		site = fakeSite()
 		site.profile.billing_address_1 = 'ПВЗ CDEK: Саратов, ул. Тестовая'
 		ctx = setup({ account: { login: '', password: '', address: 'Энгельс, ул. Старая, 1', delivery: { kind: 'cdek_door' } } })
@@ -1560,8 +1576,11 @@ describe('адрес одной строкой, права, миниатюры',
 		expect(await ctx.svc.addressCheck()).toEqual({ same: false, site: { name: 'Анна Сайтова', phone: '+79111111111', email: 'site@example.org', address: '410000, Саратовская область, Саратов, ул. Рабочая, 7' } })
 		// сохранение: в кабинет уходят те же поля, что с заказом; сверка после него — «совпадает»
 		expect(await ctx.svc.saveAccount({ lastName: 'Сидоров' } as any, USER)).toMatchObject({ site: true, lastName: 'Сидоров' })
-		expect(site.profile).toMatchObject({ billing_first_name: 'Иван', billing_last_name: 'Сидоров', billing_city: 'Саратов', billing_address_1: 'Саратов, ул. Московская, 1', billing_phone: '+79000000000', billing_email: 'na@example.org', billing_country: 'RU' })
+		expect(site.profile).toMatchObject({ billing_first_name: 'Иван', billing_last_name: 'Сидоров', billing_city: 'Саратов', billing_address_1: 'ул. Московская, 1', billing_phone: '+79000000000', billing_email: 'na@example.org', billing_country: 'RU' })
 		expect(site.addressSaves).toHaveLength(1)
+		expect(await ctx.svc.addressCheck()).toEqual({ same: true })
+		// вход после сохранения адрес не портит: с сайта возвращаются те же поля, сверка — «совпадает»
+		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ street: 'ул. Московская, 1', city: 'Саратов', address: 'Саратов, ул. Московская, 1' })
 		expect(await ctx.svc.addressCheck()).toEqual({ same: true })
 		// сайт хранит по-своему (пробелы, регистр, знаки в телефоне) — это не отличие, лишней записи нет
 		Object.assign(site.profile, { billing_phone: '+7 (900) 000-00-00', billing_email: 'NA@example.org', billing_city: ' Саратов ' })
@@ -1587,54 +1606,111 @@ describe('адрес одной строкой, права, миниатюры',
 		expect(site.calls.length).toBe(calls)
 	})
 
-	it('адрес до двери при сохранении не проверяется; город не выделился — проблема account в расчёте', async () => {
+	it('адрес при сохранении не проверяется; нет города — проблема account в расчёте; не обновившийся клиент шлёт адрес строкой', async () => {
 		fakeSite()
 		const { svc, db } = setup()
-		const a = await svc.saveAccount({ address: 'ул. Московская, 1', delivery: { kind: 'cdek_door' } } as any, USER)
-		expect(db.accountUpdate[1].$set).toEqual({ address: 'ул. Московская, 1', delivery: { kind: 'cdek_door' } })
+		const a = await svc.saveAccount({ street: 'ул. Московская, 1', city: '', delivery: { kind: 'cdek_door' } } as any, USER)
+		expect(db.accountUpdate[1].$set).toEqual({ street: 'ул. Московская, 1', city: '', state: '', postcode: '', delivery: { kind: 'cdek_door' } })
 		expect(a.configured).toBe(false)
 		expect((await svc.quote('pu1', USER)).problems).toEqual(['account'])
-		// страна в адресе пропускается
+		// до двери без улицы — тоже: поле адреса на сайте обязательное, отказ пришёл бы уже при оформлении
+		expect((await setup({ account: { city: 'Саратов', delivery: { kind: 'cdek_door' } } }).svc.quote('pu1', USER)).problems).toEqual(['account'])
+		// старый клиент: строка раскладывается по полям (страна пропускается) и сама не хранится
 		await svc.saveAccount({ address: '410019, Россия, Саратовская область, Саратов, ул. им. Маяковского, д. 1' } as any, USER)
+		expect(db.accountUpdate[1].$set).toEqual({ street: 'ул. им. Маяковского, д. 1', city: 'Саратов', state: 'Саратовская область', postcode: '410019' })
 		expect((await svc.account()).configured).toBe(true)
+		// у него при пункте выдачи без ручной правки строка — адрес пункта: адрес получателя не трогаем; manual не хранится
+		const delivery = { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов' }
+		await svc.saveAccount({ address: '410000, Саратов, ул. Тестовая, 12', delivery } as any, USER)
+		expect(db.accountUpdate[1].$set).toEqual({ delivery })
+		await svc.saveAccount({ address: 'Энгельс, ул. Ручная, 7', delivery: { ...delivery, manual: true } } as any, USER)
+		expect(db.accountUpdate[1].$set).toEqual({ delivery, street: 'ул. Ручная, 7', city: 'Энгельс', state: '', postcode: '' })
 	})
 
-	it('заказ до двери: в форму — строка целиком, город и индекс из неё', async () => {
+	it('запись старого вида переводится в поля при первой записи адреса: адрес пункта уходит в доставку, строка очищается', async () => {
+		fakeSite()
+		const point = { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов' }
+		let ctx = setup({ account: { address: '410000, Саратов, ул. Тестовая, 12' } })
+		await ctx.svc.saveAccount({ street: 'ул. Ручная, 7', city: 'Энгельс', state: '', postcode: '' } as any, USER)
+		expect(ctx.db.accountUpdate[1].$set).toEqual({ address: '', delivery: { ...point, address: '410000, Саратов, ул. Тестовая, 12' }, street: 'ул. Ручная, 7', city: 'Энгельс', state: '', postcode: '' })
+		// то же при входе: получатель — с сайта, адрес пункта — в доставку
+		fakeSite()
+		ctx = setup({ account: { address: '410000, Саратов, ул. Тестовая, 12' } })
+		await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)
+		expect(ctx.db.account).toMatchObject({ address: '', street: 'ул. Рабочая, 7', city: 'Саратов', postcode: '410000', delivery: { ...point, address: '410000, Саратов, ул. Тестовая, 12' } })
+		// в кабинете — та же строка целиком (так писала прежняя версия): вход её в поле улицы не тянет, запись остаётся как была
+		const stale = fakeSite()
+		stale.profile.billing_address_1 = 'Саратов, ул. Московская, 1'
+		ctx = setup({ account: { address: 'Саратов, ул. Московская, 1', delivery: { kind: 'cdek_door' } } })
+		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ street: 'ул. Московская, 1', city: 'Саратов' })
+		expect(ctx.db.account.address).toBe('Саратов, ул. Московская, 1')
+		// неполный запрос к записи до двери: остальные поля берутся разобранными из строки
+		ctx = setup({ account: { address: '410012, Саратов, ул. Московская, 1', delivery: { kind: 'cdek_door' } } })
+		await ctx.svc.saveAccount({ street: 'ул. Московская, 2' } as any, USER)
+		expect(ctx.db.accountUpdate[1].$set).toEqual({ address: '', street: 'ул. Московская, 2', city: 'Саратов', state: '', postcode: '410012' })
+		// не обновившийся клиент на записи старого вида выбирает пункт: его строка — адрес этого пункта; прежняя строка (адрес до двери) остаётся получателю
+		ctx = setup({ account: { address: 'Энгельс, ул. Домашняя, 3', delivery: { kind: 'cdek_door' } } })
+		await ctx.svc.saveAccount({ address: '410000, Саратов, ул. Тестовая, 12', delivery: point } as any, USER)
+		expect(ctx.db.accountUpdate[1].$set).toEqual({ address: '', delivery: { ...point, address: '410000, Саратов, ул. Тестовая, 12' }, street: 'ул. Домашняя, 3', city: 'Энгельс', state: '', postcode: '' })
+	})
+
+	it('заказ до двери: в форму — улица, город и индекс получателя', async () => {
 		const site = fakeSite()
-		await setup({ account: { address: '410012, Саратов, ул. Московская, 1, кв. 5', delivery: { kind: 'cdek_door' } } }).svc.order('pu1', 4056, USER)
-		expect(site.checkout.get('billing_address_1')).toBe('410012, Саратов, ул. Московская, 1, кв. 5')
+		await setup({ account: { postcode: '410012', city: 'Саратов', street: 'ул. Московская, 1, кв. 5', delivery: { kind: 'cdek_door' } } }).svc.order('pu1', 4056, USER)
+		expect(site.checkout.get('billing_address_1')).toBe('ул. Московская, 1, кв. 5')
 		expect(site.checkout.get('billing_city')).toBe('Саратов')
 		expect(site.checkout.get('billing_postcode')).toBe('410012')
 		expect(site.checkout.get('shipping_method[0]')).toBe('official_cdek:139')
+		expect(site.checkout.get('order_comments')).toMatch(/^СкладАН · закупка №31 \(код \w+\) · Адрес: 410012, Саратов, ул\. Московская, 1, кв\. 5$/)
 	})
 
-	it('пункт выдачи: город — из доставки, в адрес заказа — адрес пункта', async () => {
+	it('пункт выдачи: доставка считается по городу пункта, улица получателя уходит как написана, в расчёте — адрес пункта; в кабинет сайта — адрес получателя', async () => {
 		const site = fakeSite()
-		const { svc } = setup({ account: { address: 'Россия, Саратов, ул. Тестовая, 1', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов' } } })
-		const quote = await svc.quote('pu1', USER)
-		expect(quote.delivery.point).toBe('Россия, Саратов, ул. Тестовая, 1')
-		await svc.order('pu1', 3625, USER)
+		const delivery = { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', address: '410000, Саратов, ул. Тестовая, 12', city: 'Саратов' }
+		const ctx = setup({ account: { postcode: '413100', city: 'Энгельс', street: 'ул. Ручная, 7', delivery } })
+		expect((await ctx.svc.quote('pu1', USER)).delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: '410000, Саратов, ул. Тестовая, 12' })
+		await ctx.svc.order('pu1', 3625, USER)
+		// получатель в другом городе — его индекс к городу пункта не приклеивается: индекс — пункта
 		expect(site.checkout.get('billing_city')).toBe('Саратов')
-		expect(site.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: Россия, Саратов, ул. Тестовая, 1')
+		expect(site.checkout.get('billing_postcode')).toBe('410000')
+		// заказ оставил в кабинете сайта свой адрес (с городом пункта): это не «адрес отличается», и вход город получателя не подменяет
+		expect(site.profile).toMatchObject({ billing_city: 'Саратов', billing_address_1: 'ул. Ручная, 7' })
+		;(ctx.svc as any).addressMemo.clear()
+		expect(await ctx.svc.addressCheck()).toEqual({ same: true })
+		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ street: 'ул. Ручная, 7', city: 'Энгельс', postcode: '413100' })
+		// а правку на сайте вход берёт
+		site.profile.billing_address_1 = 'ул. Новая, 3'
+		expect(await ctx.svc.login({ login: 'na@example.org', password: 'secret' }, USER)).toMatchObject({ street: 'ул. Новая, 3', city: 'Саратов' })
+		expect(site.checkout.get('billing_address_1')).toBe('ул. Ручная, 7')
+		expect(site.checkout.get('order_comments')).toMatch(/^СкладАН · закупка №31 \(код \w+\) · Адрес: 413100, Энгельс, ул\. Ручная, 7$/)
+		// в кабинете сайта — город получателя, а не пункта: вход его потом не подменит
+		const cabinet = fakeSite()
+		await setup({ account: { postcode: '413100', city: 'Энгельс', street: 'ул. Ручная, 7', delivery } }).svc.saveAccount({ lastName: 'Сидоров' } as any, USER)
+		expect(cabinet.profile).toMatchObject({ billing_city: 'Энгельс', billing_postcode: '413100', billing_address_1: 'ул. Ручная, 7' })
+		// тот же город — индекс получателя идёт и в расчёт
+		const same = fakeSite()
+		await setup({ account: { postcode: '410019', city: 'саратов', street: 'ул. Ручная, 7', delivery } }).svc.order('pu1', 3625, USER)
+		expect(same.checkout.get('billing_postcode')).toBe('410019')
 	})
 
-	it('пункт выдачи, адрес вписан руками: на сайт уходит как написан; в расчёте при платной доставке — пункт, при бесплатной — адрес', async () => {
-		const site = fakeSite()
-		const account = { address: '410019, Саратов, ул. Ручная, 7', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов', manual: true } }
-		const { svc } = setup({ account })
-		const quote = await svc.quote('pu1', USER)
-		expect(quote.delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: 'SAR6, Саратов, ул. Тестовая' })
-		await svc.order('pu1', 3625, USER)
-		expect(site.checkout.get('billing_city')).toBe('Саратов')
-		expect(site.checkout.get('billing_address_1')).toBe('410019, Саратов, ул. Ручная, 7')
-		// платная доставка идёт в пункт — адреса в примечании нет
-		expect(site.checkout.get('order_comments')).not.toContain('Адрес')
-		// адрес стёрли — снова строка пункта
-		const erased = fakeSite()
-		const blank = setup({ account: { address: '', delivery: account.delivery } })
-		expect((await blank.svc.quote('pu1', USER)).delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: 'SAR6, Саратов, ул. Тестовая' })
+	it('пункт выдачи без улицы получателя: в обязательное поле адреса сайта идёт пункт — и у записи старого вида', async () => {
+		const delivery = { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', address: '410000, Саратов, ул. Тестовая, 12', city: 'Саратов' }
+		let site = fakeSite()
+		const blank = setup({ account: { delivery } })
 		await blank.svc.order('pu1', 3625, USER)
-		expect(erased.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: SAR6, Саратов, ул. Тестовая')
+		expect(site.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: 410000, Саратов, ул. Тестовая, 12')
+		expect(site.checkout.get('order_comments')).toBe(`СкладАН · закупка №31 (код ${blank.db.placed.code})`)
+		// адреса пункта нет — строка пункта для сайта; у Яндекса — своё название службы
+		site = fakeSite()
+		await setup({ account: { delivery: { kind: 'yandex_pvz', code: 'y1', title: 'Саратов (410000, Саратов, ул. Первая)', city: 'Саратов' } } }).svc.order('pu1', 3344.59, USER)
+		expect(site.checkout.get('billing_address_1')).toBe('ПВЗ Яндекс Доставки: Саратов (410000, Саратов, ул. Первая)')
+		// старая запись: строка адреса — адрес пункта. В заказ — как раньше, адресом получателя она не становится
+		site = fakeSite()
+		const old = setup({ account: { address: '410000, Саратов, ул. Тестовая, 12' } })
+		expect((await old.svc.quote('pu1', USER)).delivery.point).toBe('410000, Саратов, ул. Тестовая, 12')
+		await old.svc.order('pu1', 3625, USER)
+		expect(site.checkout.get('billing_address_1')).toBe('ПВЗ CDEK: 410000, Саратов, ул. Тестовая, 12')
+		expect(site.checkout.get('order_comments')).toBe(`СкладАН · закупка №31 (код ${old.db.placed.code})`)
 	})
 
 	it('настройка — только с правом создавать или править закупки; председатель без них — нет', () => {
@@ -1729,7 +1805,7 @@ describe('заказ гостем', () => {
 		expect(site.calls.some((c) => c.who === 'account' || (c.path === '/my-account/' && c.method === 'POST'))).toBe(false)
 		expect(site.checkout.get('billing_email')).toBe('na@example.org')
 		expect(site.checkout.get('billing_phone')).toBe('+79000000000')
-		expect(site.checkout.get('order_comments')).toBe(`${db.placed.code} · Skladan · закупка №31`)
+		expect(site.checkout.get('order_comments')).toBe(`СкладАН · закупка №31 (код ${db.placed.code})`)
 		expect(db.placed).toMatchObject({ orderId: 501, orderKey: 'wc_order_K', guest: true, login: null })
 		// куки сессии и поля формы после привязки не хранятся; почта заказа — хранится
 		expect(db.placed.cookies).toBeUndefined()

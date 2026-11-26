@@ -322,12 +322,12 @@ describe('ответы сайта', () => {
 	})
 
 	it('адрес одной строкой: город, индекс и область по частям через запятую', () => {
-		expect(parseAddress('Саратов, ул. Московская, 1')).toEqual({ city: 'Саратов', postcode: '', state: '' })
-		expect(parseAddress('410000, Саратовская обл., г. Энгельс, ул. Тельмана, 5')).toEqual({ city: 'Энгельс', postcode: '410000', state: 'Саратовская обл.' })
+		expect(parseAddress('Саратов, ул. Московская, 1')).toEqual({ city: 'Саратов', postcode: '', state: '', street: 'ул. Московская, 1' })
+		expect(parseAddress('410000, Саратовская обл., г. Энгельс, ул. Тельмана, 5')).toEqual({ city: 'Энгельс', postcode: '410000', state: 'Саратовская обл.', street: 'ул. Тельмана, 5' })
 		expect(parseAddress('Краснодарский край, город Сочи, Курортный пр-т, 10')).toMatchObject({ city: 'Сочи', state: 'Краснодарский край' })
 		expect(parseAddress('Ханты-Мансийский АО, г.Сургут, ул. Ленина, 1')).toMatchObject({ city: 'Сургут', state: 'Ханты-Мансийский АО' })
 		// страна пропускается
-		expect(parseAddress('410019, Россия, Саратовская область, Саратов, ул. им. Маяковского, д. 1')).toEqual({ city: 'Саратов', postcode: '410019', state: 'Саратовская область' })
+		expect(parseAddress('410019, Россия, Саратовская область, Саратов, ул. им. Маяковского, д. 1')).toEqual({ city: 'Саратов', postcode: '410019', state: 'Саратовская область', street: 'ул. им. Маяковского, д. 1' })
 		expect(parseAddress('РФ, г. Энгельс, ул. Тельмана, 5').city).toBe('Энгельс')
 		// город с цифрами или длиннее четырёх слов — не город; «д.» без номера — деревня, а не дом
 		expect(parseAddress('Саратов 2, ул. Ленина, 1').city).toBe('')
@@ -335,7 +335,7 @@ describe('ответы сайта', () => {
 		expect(parseAddress('д. 5, ул. Ленина').city).toBe('')
 		expect(parseAddress('д. Ивановка, ул. Лесная, 3').city).toBe('д. Ивановка')
 		// улица на месте города, пусто — города нет
-		expect(parseAddress('ул. Крайняя, 1, Саратов').city).toBe('')
+		expect(parseAddress('ул. Крайняя, 1, Саратов')).toMatchObject({ city: '', street: 'ул. Крайняя, 1, Саратов' })
 		expect(parseAddress('').city).toBe('')
 	})
 

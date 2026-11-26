@@ -473,19 +473,20 @@ const REGION = new Set(['обл', 'область', 'край', 'респ', 'р�
 const COUNTRY = /^(россия|рф|российская федерация|russia)$/i
 
 /**
- * Город, индекс и область из адреса одной строкой («Саратов, ул. Московская, 1»): части через запятую;
- * 6 цифр — индекс; часть со словом «обл», «край», «респ», «округ», «АО» — область; страна пропускается; первая из остальных — город
- * (без «г.», «город»). Улица на месте города — города нет: сайт считает доставку по городу.
+ * Адрес одной строкой («Саратов, ул. Московская, 1») по полям сайта: части через запятую; 6 цифр — индекс; часть со словом
+ * «обл», «край», «респ», «округ», «АО» — область; страна пропускается; первая из остальных — город (без «г.», «город»);
+ * всё прочее — улица и дом. Улица на месте города — города нет (вся строка — улица): сайт считает доставку по городу.
+ * Одной строкой адрес хранили раньше; так же его шлёт ещё не обновившийся клиент.
  */
 export function parseAddress(address: string) {
 	const parts = String(address || '').split(',').map((p) => p.trim()).filter(Boolean)
 	const postcode = parts.find((p) => /^\d{6}$/.test(p)) || ''
 	const state = parts.find((p) => p.split(/[\s.]+/).some((w) => REGION.has(w.toLowerCase()))) || ''
-	const first = parts.find((p) => p !== postcode && p !== state && !COUNTRY.test(p)) || ''
-	const city = first.replace(/^(г\.\s*|г\s+|город\s+)/i, '').trim()
+	const rest = parts.filter((p) => p !== postcode && p !== state && !COUNTRY.test(p))
+	const city = (rest[0] || '').replace(/^(г\.\s*|г\s+|город\s+)/i, '').trim()
 	// с цифрами или длиннее четырёх слов — это не город (улица, дом, приписка), сайту такой не отдаём
-	const plausible = city && !STREET.test(city) && !HOUSE.test(city) && !/\d/.test(city) && city.split(/\s+/).length <= 4
-	return { city: plausible ? city : '', postcode, state }
+	const plausible = !!city && !STREET.test(city) && !HOUSE.test(city) && !/\d/.test(city) && city.split(/\s+/).length <= 4
+	return { city: plausible ? city : '', postcode, state, street: rest.slice(plausible ? 1 : 0).join(', ') }
 }
 
 /** Название для сравнения: регистр, кавычки, «ё», лишние пробелы */

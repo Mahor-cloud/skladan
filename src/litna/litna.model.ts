@@ -42,13 +42,33 @@ export class LitnaAccount {
 	@prop({ default: '' })
 	email: string
 
-	/** Адрес одной строкой: до двери — как написал человек (город — первой частью), у пункта выдачи — адрес пункта, пока его не поправили руками (delivery.manual) */
+	/**
+	 * Адрес получателя — полями раздела «Адрес» кабинета сайта. От способа доставки не зависит: пишется в кабинет сайта
+	 * и в примечание заказа.
+	 */
+	@prop({ default: '' })
+	street: string
+
+	@prop({ default: '' })
+	city: string
+
+	@prop({ default: '' })
+	state: string
+
+	@prop({ default: '' })
+	postcode: string
+
+	/** Запись старого вида: адрес одной строкой (у пункта выдачи — адрес пункта). Не пуст — запись ещё не переведена в поля */
 	@prop({ default: '' })
 	address: string
 
-	/** code и title — выбранный пункт (title — строка для сайта), city — город, по которому искали пункт, manual — адрес при пункте вписан руками */
+	/** Примечание к каждому заказу на сайте; адрес в него дописывается сам */
+	@prop({ default: '' })
+	comment: string
+
+	/** code и title — выбранный пункт (title — строка для сайта), address — его адрес для показа, city — город, по которому искали пункт */
 	@prop()
-	delivery?: { kind: string; code?: string; title?: string; city?: string; manual?: boolean }
+	delivery?: { kind: string; code?: string; title?: string; city?: string; address?: string }
 }
 
 export interface LitnaOrder extends Base {}

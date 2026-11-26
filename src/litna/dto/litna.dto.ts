@@ -45,7 +45,13 @@ export class LitnaDeliveryDto {
 	@MaxLength(100)
 	city?: string
 
-	/** Адрес при пункте выдачи вписан руками (бесплатную доставку магазин везёт не в пункт): уходит на сайт как написан */
+	/** Адрес выбранного пункта — показать человеку (у строки для сайта адрес бывает неполным) */
+	@IsOptional()
+	@IsString()
+	@MaxLength(300)
+	address?: string
+
+	/** Не используется: его шлют ещё не обновившиеся клиенты */
 	@IsOptional()
 	@IsBoolean()
 	manual?: boolean
@@ -105,11 +111,38 @@ export class LitnaAccountDto {
 	@MaxLength(200)
 	email?: string
 
-	/** Одной строкой: до двери — «Город, улица, дом» (город — первой частью), у пункта выдачи — адрес пункта */
+	/** Адрес получателя — полями раздела «Адрес» кабинета сайта: улица и дом, населённый пункт, область, индекс */
+	@IsOptional()
+	@IsString()
+	@MaxLength(300)
+	street?: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(100)
+	city?: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(100)
+	state?: string
+
+	@IsOptional()
+	@IsString()
+	@MaxLength(20)
+	postcode?: string
+
+	/** Адрес одной строкой — так его шлёт ещё не обновившийся клиент; раскладывается по полям */
 	@IsOptional()
 	@IsString()
 	@MaxLength(300)
 	address?: string
+
+	/** Примечание к каждому заказу на сайте; адрес в него дописывается сам */
+	@IsOptional()
+	@IsString()
+	@MaxLength(500)
+	comment?: string
 
 	@IsOptional()
 	@ValidateNested()

@@ -108,46 +108,91 @@ const TITLES: Record<string, string> = {
 	yandex_door: 'Яндекс Доставка — до двери',
 }
 
+const WHERE = ['street', 'city', 'state', 'postcode'] as const
+type Where = Record<(typeof WHERE)[number], string>
+
+/** Запись старого вида: адрес одной строкой. У пункта выдачи без ручной правки это был адрес пункта, а не получателя */
+const oldPoint = (a: any) => !!a?.address && isPvz(a.delivery?.kind) && !a.delivery.manual
+
+/** Адрес получателя по полям сайта; у записи старого вида — разобранный из строки */
+const whereOf = (a: any): Where =>
+	a?.address
+		? oldPoint(a)
+			? { street: '', city: '', state: '', postcode: '' }
+			: parseAddress(a.address)
+		: { street: a?.street || '', city: a?.city || '', state: a?.state || '', postcode: a?.postcode || '' }
+const whereLine = (a: any) => [whereOf(a).postcode, whereOf(a).state, whereOf(a).city, whereOf(a).street].filter(Boolean).join(', ')
+
+/** Адрес выбранного пункта — показать человеку: у строки пункта для сайта он бывает неполным */
+const pointOf = (a: any) => a?.delivery?.address || (oldPoint(a) ? a.address : '') || a?.delivery?.title || ''
+
+/** Запись старого вида переводится в поля при первой записи адреса: адрес пункта — в доставку, строка очищается */
+const converted = (a: any) => (a?.address ? { address: '', ...(oldPoint(a) && { delivery: { ...a.delivery, address: a.address } }) } : {})
+
 /**
- * Где получать: у пункта выдачи город — тот, по которому искали пункт; до двери — из адреса одной строкой.
- * Индекс и область — если нашлись в строке адреса (сайт считает доставку и по одному городу).
+ * Куда считать доставку: до двери — адрес получателя; у пункта выдачи город — тот, по которому искали пункт, а индекс и
+ * область получателя идут, только если он в том же городе (иначе сайт получил бы приметы двух разных мест) — тогда они пункта.
  */
 const placeOf = (a: LitnaAccount) => {
-	const parsed = parseAddress(a?.address)
-	return { ...parsed, city: isPvz(a?.delivery?.kind) ? a.delivery.city || '' : parsed.city }
+	const w = whereOf(a)
+	if (!isPvz(a?.delivery?.kind)) return w
+	const city = a.delivery.city || ''
+	const same = !!w.city && norm(w.city) === norm(city)
+	// иначе индекс и область — пункта, из его адреса
+	const point = parseAddress(pointOf(a))
+	return { ...w, city, state: (same && w.state) || point.state, postcode: (same && w.postcode) || point.postcode }
 }
 
-/** Заполнено всё, без чего сайт не примет заказ: получатель и доставка (вход не нужен — без него заказ гостем) */
-const ready = (a: LitnaAccount) => !!(a?.firstName && a.lastName && a.phone && a.email && a.delivery?.kind && placeOf(a).city)
+/**
+ * Примечание к заказу: «СкладАН», закупка, адрес получателя и то, что местность написала в поле комментария.
+ * Адрес магазин просит писать именно здесь: бесплатные заказы он везёт до терминала транспортной компании, который иначе
+ * выбирает менеджер. Код обязателен: по нему после потерянного ответа сайта свой заказ отличается от чужих в кабинете —
+ * без него заказ мог бы уйти второй раз. Стоит в начале: длинное примечание сайт может обрезать.
+ */
+export const orderNote = (code: string, purchaseNumber: number, a: LitnaAccount) =>
+	[`СкладАН · закупка №${purchaseNumber} (код ${code})`, whereLine(a) && `Адрес: ${whereLine(a)}`, a?.comment]
+		.map((part) => String(part || '').replace(/\s+/g, ' ').trim())
+		.filter(Boolean)
+		.join(' · ')
+
+/**
+ * Заполнено всё, без чего сайт не примет заказ: получатель и доставка (вход не нужен — без него заказ гостем).
+ * Поле адреса на сайте обязательное: до двери нужна улица, у пункта выдачи вместо неё идёт пункт.
+ */
+const ready = (a: LitnaAccount) =>
+	!!(a?.firstName && a.lastName && a.phone && a.email && a.delivery?.kind && placeOf(a).city && (isPvz(a.delivery.kind) || whereOf(a).street))
 const loggedIn = (a: LitnaAccount) => !!(a?.login && a.password)
 
-/** Адрес при пункте выдачи вписан руками: бесплатную доставку магазин везёт не в пункт, а по адресу */
-const byHand = (a: LitnaAccount) => isPvz(a?.delivery?.kind) && !!a.delivery.manual && !!a.address
+// Улица — как написал человек. Не написана, а выбран пункт — в адрес идёт пункт: поле адреса на сайте обязательное,
+// а при бесплатной доставке пункт сайт не спрашивает.
+const customer = (a: LitnaAccount, place = placeOf(a)): Customer => ({
+	first_name: a.firstName,
+	last_name: a.lastName,
+	state: place.state,
+	city: place.city,
+	postcode: place.postcode,
+	address_1: whereOf(a).street || (isPvz(a.delivery.kind) ? `ПВЗ ${a.delivery.kind === 'cdek_pvz' ? 'CDEK' : 'Яндекс Доставки'}: ${pointOf(a) || a.delivery.code}` : ''),
+	phone: a.phone,
+	email: a.email,
+})
 
-// Пункт пишется и в адрес: при бесплатной доставке сайт пункт не спрашивает, а поле адреса у него обязательное.
-// Вписанный руками адрес уходит как написан.
-const customer = (a: LitnaAccount): Customer => {
-	const { city, postcode, state } = placeOf(a)
-	return {
-		first_name: a.firstName,
-		last_name: a.lastName,
-		state,
-		city,
-		postcode,
-		address_1: isPvz(a.delivery.kind) && !byHand(a)
-			? `ПВЗ ${a.delivery.kind === 'cdek_pvz' ? 'CDEK' : 'Яндекс Доставки'}: ${a.address || a.delivery.title || a.delivery.code}`
-			: a.address,
-		phone: a.phone,
-		email: a.email,
-	}
-}
-
-/** Поля раздела «Адрес» кабинета сайта из нашего аккаунта — те же, что уходят с заказом */
+/**
+ * Поля раздела «Адрес» кабинета сайта из нашего аккаунта: адрес получателя как он есть (город — его, а не пункта выдачи;
+ * не указан — город расчёта доставки: поле на сайте обязательное).
+ */
 const billingOf = (a: LitnaAccount): Record<string, string> =>
-	Object.fromEntries(Object.entries({ ...customer(a), country: 'RU' }).map(([k, v]) => [`billing_${k}`, v || '']))
+	Object.fromEntries(Object.entries({ ...customer(a, whereOf(a).city ? whereOf(a) : placeOf(a)), country: 'RU' }).map(([k, v]) => [`billing_${k}`, v || '']))
 /** Сайт хранит значения по-своему (пробелы, регистр, знаки в телефоне) — сравниваем по сути */
 const plain = (k: string, v: any) => (k.endsWith('_phone') ? String(v ?? '').replace(/\D/g, '') : String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase())
 const sameBilling = (form: Record<string, string>, fields: Record<string, string>) => Object.entries(fields).every(([k, v]) => plain(k, form[k]) === plain(k, v))
+/**
+ * Поля кабинета, какими их оставляет оформление заказа: сайт переносит адрес заказа в кабинет, а у пункта выдачи город
+ * заказа — город пункта. Это след нашего заказа, а не правка на сайте и не адрес получателя.
+ */
+const orderBilling = (a: LitnaAccount): Record<string, string> =>
+	Object.fromEntries(Object.entries({ ...customer(a), country: 'RU' }).map(([k, v]) => [`billing_${k}`, v || '']))
+const PLACE = ['billing_address_1', 'billing_city', 'billing_state', 'billing_postcode']
+const samePlace = (form: Record<string, string>, fields: Record<string, string>) => PLACE.every((k) => plain(k, form[k]) === plain(k, fields[k]))
 
 const revertedText = (placed: { orderId?: number }) => `Заказ №${placed.orderId} отменён на lit-na.ru — закупка переведена в черновик`
 
@@ -255,8 +300,11 @@ export class LitnaService {
 			lastName: a?.lastName || '',
 			phone: a?.phone || '',
 			email: a?.email || '',
-			address: a?.address || '',
-			delivery: a?.delivery || null,
+			...whereOf(a),
+			// одной строкой — для ещё не обновившегося клиента
+			address: a?.address || whereLine(a),
+			comment: a?.comment || '',
+			delivery: a?.delivery ? { ...a.delivery, ...(oldPoint(a) && { address: a.address }) } : null,
 		}
 	}
 
@@ -278,9 +326,10 @@ export class LitnaService {
 		const form = await s.address()
 		if (!form) throw new BadGatewayException('lit-na.ru не показал адрес аккаунта')
 		const v = (k: string) => String(form[`billing_${k}`] || '').trim()
-		const street = v('address_1')
-		const address = street.startsWith('ПВЗ ') ? '' : [v('postcode'), v('state'), v('city'), street].filter(Boolean).join(', ')
-		return { form, profile: { firstName: v('first_name'), lastName: v('last_name'), phone: v('phone'), email: v('email'), address } }
+		// строка «ПВЗ …» — не адрес получателя: её пишет наш заказ, когда улица не указана; город и индекс при ней — пункта
+		const own = !v('address_1').startsWith('ПВЗ ')
+		const where = { street: v('address_1'), city: v('city'), state: v('state'), postcode: v('postcode') }
+		return { form, profile: { firstName: v('first_name'), lastName: v('last_name'), phone: v('phone'), email: v('email'), ...(own ? where : {}) } }
 	}
 
 	/**
@@ -300,7 +349,7 @@ export class LitnaService {
 			if (s) {
 				const { form } = await this.siteProfile(s)
 				const v = (k: string) => String(form[`billing_${k}`] || '').trim()
-				result = sameBilling(form, billingOf(a))
+				result = sameBilling(form, billingOf(a)) || sameBilling(form, orderBilling(a))
 					? { same: true }
 					: { same: false, site: { name: [v('first_name'), v('last_name')].filter(Boolean).join(' '), phone: v('phone'), email: v('email'), address: [v('postcode'), v('state'), v('city'), v('address_1')].filter(Boolean).join(', ') } }
 			}
@@ -336,9 +385,30 @@ export class LitnaService {
 
 	/** Получатель и доставка; адрес не проверяется (город не выделится — расчёт покажет проблему account). site — записан ли адрес в кабинет сайта */
 	async saveAccount(dto: LitnaAccountDto, user: UserModel) {
-		const set: Record<string, any> = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined))
+		let set: Record<string, any> = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined))
 		// пробел по краям — и сайт не узнает почту заказа при подтверждении
 		for (const k of ['email', 'phone']) if (typeof set[k] === 'string') set[k] = set[k].trim()
+		if (set.delivery) {
+			// manual шлют не обновившиеся клиенты: он лишь говорит, чей адрес пришёл строкой, и не хранится
+			const { manual: _, ...delivery } = set.delivery
+			set.delivery = delivery
+		}
+		const now = await this.findAccount()
+		if (set.address !== undefined) {
+			// не обновившийся клиент: адрес одной строкой. У пункта выдачи без ручной правки это адрес пункта — не получателя:
+			// у записи старого вида он заменяет прежнюю строку (иначе та осталась бы «адресом пункта»), у новой не нужен
+			const point = isPvz(dto.delivery?.kind) && !dto.delivery.manual
+			if (point && now?.address) set = { ...set, address: '', delivery: { ...set.delivery, address: set.address }, ...whereOf(now) }
+			else {
+				if (!point && !WHERE.some((k) => k in set)) Object.assign(set, parseAddress(set.address))
+				delete set.address
+			}
+		}
+		if (WHERE.some((k) => k in set)) {
+			for (const k of WHERE) if (typeof set[k] === 'string') set[k] = set[k].replace(/\s+/g, ' ').trim()
+			// запись старого вида переводится целиком: чего в запросе нет — берётся разобранным из строки
+			set = { ...converted(now), ...whereOf(now), ...set }
+		}
 		await this.accountModel.updateOne({ company: String(user.company) }, { $set: set }, { upsert: true }).exec()
 		const site = await this.pushProfile(user)
 		return { ...(await this.changed(user)), site }
@@ -361,12 +431,18 @@ export class LitnaService {
 		this.sessions.set(company, s)
 		this.warmed.delete(company)
 		// получатель и адрес — из кабинета сайта, поверх записанного у нас: для сайта верны его данные (пустое с сайта наше не стирает).
-		// У пункта выдачи адрес — сам пункт: его адрес сайта не заменяет. Не прочитались — вход всё равно выполнен.
+		// Не прочитались — вход всё равно выполнен.
 		this.addressMemo.delete(company)
 		try {
-			const { profile } = await this.siteProfile(s)
+			const { form, profile } = await this.siteProfile(s)
+			let fill: Record<string, any> = Object.fromEntries(Object.entries(profile).filter(([, v]) => v))
 			const now = await this.findAccount()
-			const fill = Object.fromEntries(Object.entries(profile).filter(([k, v]) => v && !(k === 'address' && isPvz(now?.delivery?.kind))))
+			// в кабинете — адрес, оставленный нашим же заказом (у пункта выдачи — с городом пункта): адрес получателя им не заменяем.
+			// Так же — строка записи старого вида: прежняя версия писала её в поле адреса сайта целиком, вместе с городом
+			const ownLine = !!now?.address && plain('', form.billing_address_1) === plain('', now.address)
+			if (ownLine || (now?.delivery?.kind && samePlace(form, orderBilling(now)))) for (const k of WHERE) delete fill[k]
+			// адрес пришёл — запись старого вида переводится в поля: то, чего на сайте нет, остаётся нашим
+			if (WHERE.some((k) => fill[k])) fill = { ...converted(now), ...whereOf(now), ...fill }
 			if (Object.keys(fill).length) await this.accountModel.updateOne({ company }, { $set: fill }).exec()
 		} catch (e) {
 			this.logger.warn(`Адрес из кабинета lit-na.ru не прочитан: ${(e as Error)?.message}`)
@@ -784,9 +860,6 @@ export class LitnaService {
 				} else if (rate && held) Object.assign(held, { session: s, rate })
 			}
 		}
-		// адрес вписан руками: при бесплатной доставке посылка идёт по нему (manual — подпись «Адрес»), при платной — в пункт
-		const toAddress = byHand(account) && rate?.kind === 'free'
-		const point = byHand(account) && !toAddress ? account.delivery.title : account?.address || account?.delivery?.title
 		const goods = kop(lines.reduce((sum, l) => sum + kop(l.price || 0) * l.quantity, 0) / 100) / 100
 		const shipping = kop(rate?.price || 0) / 100
 		return {
@@ -795,7 +868,7 @@ export class LitnaService {
 			shipping,
 			total: (kop(goods) + kop(shipping)) / 100,
 			free: rate?.kind === 'free',
-			delivery: { kind: kind || null, title: TITLES[kind] || null, point: (isPvz(kind) && point) || '', ...(toAddress && { manual: true }) },
+			delivery: { kind: kind || null, title: TITLES[kind] || null, point: (isPvz(kind) && pointOf(account)) || '' },
 			problems: [...problems],
 			notice,
 			// пустой черновик заказывать нечего
@@ -938,9 +1011,7 @@ export class LitnaService {
 			if (held && !form) s = new LitnaSession()
 			if (form) this.say(purchase, 'Вносим адрес', 4)
 			fields = form ? await this.choose(s, account, held.rate) : await this.prepare(s, account, purchase, quote)
-			// код — в начале: сайт может обрезать длинное примечание. При бесплатной доставке следом — адрес из аккаунта (пункта или
-			// вписанный руками): магазин везёт такие заказы до терминала транспортной компании и адрес просит писать в примечании
-			fields.order_comments = `${code} · Skladan · закупка №${purchase.purchaseNumber}${quote.free && quote.delivery.point ? ` · Адрес: ${quote.delivery.point}` : ''}`
+			fields.order_comments = orderNote(code, purchase.purchaseNumber, account)
 			// выдержка — от момента отправки формы, а не от сборки корзины; гостю — и куки сессии с собранной корзиной
 			this.say(purchase, 'Оформляем заказ', 5)
 			result = await s.checkout(

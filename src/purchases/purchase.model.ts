@@ -68,7 +68,7 @@ export class Purchase {
 		status: string
 		shipping: number
 		total: number
-		delivery: { kind: string; title: string | null; point: string | null; manual?: boolean }
+		delivery: { kind: string; title: string | null; point: string | null }
 		createdAt: number
 		/** когда проверка отметила оплату (статус сайта — в status) */
 		paidAt?: number
