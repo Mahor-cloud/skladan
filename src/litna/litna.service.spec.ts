@@ -726,16 +726,22 @@ describe('расчёт', () => {
 		expect(await setup({ purchase: { items: [] } }).svc.quote('pu1', USER)).toMatchObject({ lines: [], canOrder: false })
 	})
 
-	it('от 15 000 ₽ — единственная бесплатная доставка', async () => {
-		fakeSite()
-		const quote = await setup({ purchase: { items: [{ product: P1, quantity: 15 }] } }).svc.quote('pu1', USER)
+	it('от 15 000 ₽ — единственная бесплатная доставка; адрес из аккаунта уходит и в примечание к заказу', async () => {
+		const plain = fakeSite()
+		const ctx = setup({ purchase: { items: [{ product: P1, quantity: 15 }] } })
+		const quote = await ctx.svc.quote('pu1', USER)
 		expect(quote).toMatchObject({ goods: 15000, shipping: 0, total: 15000, free: true, canOrder: true })
 		expect(quote.delivery.point).toBe('SAR6, Саратов, ул. Тестовая')
+		await ctx.svc.order('pu1', 15000, USER)
+		expect(plain.checkout.get('order_comments')).toBe(`${ctx.db.placed.code} · Skladan · закупка №31 · Адрес: SAR6, Саратов, ул. Тестовая`)
 		// адрес при пункте вписан руками: бесплатная доставка идёт по нему, не в пункт
-		fakeSite()
 		const account = { address: '410019, Саратов, ул. Ручная, 7', delivery: { kind: 'cdek_pvz', code: 'SAR6', title: 'SAR6, Саратов, ул. Тестовая', city: 'Саратов', manual: true } }
-		const byHand = await setup({ account, purchase: { items: [{ product: P1, quantity: 15 }] } }).svc.quote('pu1', USER)
-		expect(byHand.delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: '410019, Саратов, ул. Ручная, 7', manual: true })
+		const site = fakeSite()
+		const hand = setup({ account, purchase: { items: [{ product: P1, quantity: 15 }] } })
+		expect((await hand.svc.quote('pu1', USER)).delivery).toEqual({ kind: 'cdek_pvz', title: 'CDEK — пункт выдачи', point: '410019, Саратов, ул. Ручная, 7', manual: true })
+		// и в примечание к заказу: адрес терминала магазин просит писать там
+		await hand.svc.order('pu1', 15000, USER)
+		expect(site.checkout.get('order_comments')).toBe(`${hand.db.placed.code} · Skladan · закупка №31 · Адрес: 410019, Саратов, ул. Ручная, 7`)
 	})
 
 	it('у созданной закупки расчёта нет', async () => {
@@ -1621,6 +1627,8 @@ describe('адрес одной строкой, права, миниатюры',
 		await svc.order('pu1', 3625, USER)
 		expect(site.checkout.get('billing_city')).toBe('Саратов')
 		expect(site.checkout.get('billing_address_1')).toBe('410019, Саратов, ул. Ручная, 7')
+		// платная доставка идёт в пункт — адреса в примечании нет
+		expect(site.checkout.get('order_comments')).not.toContain('Адрес')
 		// адрес стёрли — снова строка пункта
 		const erased = fakeSite()
 		const blank = setup({ account: { address: '', delivery: account.delivery } })

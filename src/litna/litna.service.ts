@@ -938,8 +938,9 @@ export class LitnaService {
 			if (held && !form) s = new LitnaSession()
 			if (form) this.say(purchase, 'Вносим адрес', 4)
 			fields = form ? await this.choose(s, account, held.rate) : await this.prepare(s, account, purchase, quote)
-			// код — в начале: сайт может обрезать длинное примечание
-			fields.order_comments = `${code} · Skladan · закупка №${purchase.purchaseNumber}`
+			// код — в начале: сайт может обрезать длинное примечание. При бесплатной доставке следом — адрес из аккаунта (пункта или
+			// вписанный руками): магазин везёт такие заказы до терминала транспортной компании и адрес просит писать в примечании
+			fields.order_comments = `${code} · Skladan · закупка №${purchase.purchaseNumber}${quote.free && quote.delivery.point ? ` · Адрес: ${quote.delivery.point}` : ''}`
 			// выдержка — от момента отправки формы, а не от сборки корзины; гостю — и куки сессии с собранной корзиной
 			this.say(purchase, 'Оформляем заказ', 5)
 			result = await s.checkout(
